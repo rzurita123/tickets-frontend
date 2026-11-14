@@ -8,11 +8,24 @@
   const CLAVE = 'ormen-tickets-demo:db';
   const MAX_AUDITORIA = 4000;
   const MAX_CORREOS = 1500;
+  const CLASES_CRITICIDAD = ['cri-alta', 'cri-media', 'cri-baja'];
 
   let db = null;
   // Llegan de la Api y no se guardan.
   let listaUsuarios = [];
   let listaLocalidades = [];
+  let cat = sinCatalogos();
+
+  function sinCatalogos() {
+    return { sistemas: [], subsistemas: [], tiposProblema: [], criticidades: [], gruposSoporte: [] };
+  }
+
+  function itemDesdeApi(tipo, x) {
+    const item = { id: x.codigo, nombre: x.nombre, activo: x.activo !== false };
+    if (tipo === 'subsistemas') item.sistemaId = x.sistema;
+    if (tipo === 'criticidades') item.clase = CLASES_CRITICIDAD.includes(x.codigo) ? x.codigo : '';
+    return item;
+  }
   let disponible = true; // localStorage utilizable
   const oyentes = new Set();
 
@@ -96,7 +109,7 @@
   function cargarDatos() {
     db = leerGuardado();
     if (!db) {
-      db = App.semilla.generar(listaUsuarios, listaLocalidades);
+      db = App.semilla.generar(listaUsuarios, listaLocalidades, cat);
       escribir();
     }
   }
@@ -111,8 +124,10 @@
     return { almacenamiento: disponible };
   }
 
-  // Usuarios y localidades de la Api con ids locales.
-  function cargar(usuariosApi, localidadesApi) {
+  // Datos de la Api con ids locales.
+  function cargar(usuariosApi, localidadesApi, catalogosApi) {
+    cat = sinCatalogos();
+    for (const tipo of Object.keys(cat)) cat[tipo] = catalogosApi[tipo].map((x) => itemDesdeApi(tipo, x));
     listaLocalidades = localidadesApi.map((l) => ({ id: 'loc-' + l.id, nombre: l.nombre, activa: l.activa !== false }));
     listaUsuarios = usuariosApi.map((u) => ({
       id: 'u-' + u.usuario, usuario: u.usuario, nombre: u.nombre, email: u.email, rol: u.rol,
@@ -124,6 +139,7 @@
   function vaciar() {
     listaUsuarios = [];
     listaLocalidades = [];
+    cat = sinCatalogos();
     db = null;
   }
 
@@ -133,7 +149,7 @@
   }
 
   function restablecer(usuarioId) {
-    db = App.semilla.generar(listaUsuarios, listaLocalidades);
+    db = App.semilla.generar(listaUsuarios, listaLocalidades, cat);
     if (usuarioId && usuario(usuarioId)) auditar(usuarioId, 'DATOS_RESTABLECIDOS', null, 'Se volvió a generar la base de ejemplo');
     escribir();
     emitir({ externo: false, restablecido: true });
@@ -145,16 +161,16 @@
 
   const usuario = (id) => porId(listaUsuarios, id);
   const localidad = (id) => porId(listaLocalidades, id);
-  const sistema = (id) => porId(db.sistemas, id);
-  const subsistema = (id) => porId(db.subsistemas, id);
-  const tipoProblema = (id) => porId(db.tiposProblema, id);
-  const criticidad = (id) => porId(db.criticidades, id);
+  const sistema = (id) => porId(cat.sistemas, id);
+  const subsistema = (id) => porId(cat.subsistemas, id);
+  const tipoProblema = (id) => porId(cat.tiposProblema, id);
+  const criticidad = (id) => porId(cat.criticidades, id);
   const solucion = (id) => porId(db.soluciones, id);
   const ticket = (id) => porId(db.tickets, id);
 
   /** Nombre de un elemento de catálogo, o `siNo` si no existe. */
   function nombre(coleccion, id, siNo) {
-    const x = porId(coleccion === 'localidades' ? listaLocalidades : db[coleccion], id);
+    const x = porId(coleccion === 'localidades' ? listaLocalidades : cat[coleccion] || db[coleccion], id);
     if (x) return x.nombre != null ? x.nombre : x.titulo;
     return siNo === undefined ? '—' : siNo;
   }
@@ -191,14 +207,14 @@
     return l.sort(orden);
   }
   function sistemas(soloActivos) {
-    return soloActivos ? activos(db.sistemas) : db.sistemas.slice();
+    return soloActivos ? activos(cat.sistemas) : cat.sistemas.slice();
   }
   function subsistemasDe(sistemaId, soloActivos) {
-    const l = db.subsistemas.filter((x) => x.sistemaId === sistemaId);
+    const l = cat.subsistemas.filter((x) => x.sistemaId === sistemaId);
     return soloActivos ? activos(l) : l;
   }
   function catalogo(tipo, soloActivos) {
-    const l = db[tipo].slice();
+    const l = cat[tipo].slice();
     return soloActivos ? activos(l) : l;
   }
 
@@ -564,7 +580,7 @@
 
   /** Grupos de soporte y personas de Mesa de ayuda a las que se puede elevar. */
   function grupoSoporte(id) {
-    return porId(db.gruposSoporte, id);
+    return porId(cat.gruposSoporte, id);
   }
 
   function destinoDesdeClave(clave) {
@@ -1004,45 +1020,42 @@
     gruposSoporte: 'Grupos de soporte',
   };
 
-  function guardarItemCatalogo(tipo, datos, admin, id) {
+  async function pedirCatalogo(fn) {
+    try {
+      return await fn(App.auth.token());
+    } catch (e) {
+      if (e.status === 400) throw errorDeCampos({ nombre: e.message });
+      throw new ErrorDemo(e.message);
+    }
+  }
+
+  async function guardarItemCatalogo(tipo, datos, admin, id) {
     exigirAdmin(admin);
     exigir(NOMBRES_CATALOGO[tipo], 'Catálogo desconocido.');
-    const lista = db[tipo];
-    const existente = id ? porId(lista, id) : null;
+    const existente = id ? porId(cat[tipo], id) : null;
     exigir(!id || existente, 'El elemento no existe.');
     const n = limpio(datos.nombre);
     if (!n) throw errorDeCampos({ nombre: 'Escribí el nombre.' });
-    const sistemaId = tipo === 'subsistemas' ? (existente ? existente.sistemaId : datos.sistemaId) : null;
-    if (tipo === 'subsistemas' && !sistema(sistemaId)) throw errorDeCampos({ nombre: 'Elegí el sistema.' });
-    const repetido = lista.some((x) => x.id !== id && U.normalizar(x.nombre) === U.normalizar(n) && (tipo !== 'subsistemas' || x.sistemaId === sistemaId));
-    if (repetido) throw errorDeCampos({ nombre: 'Ya existe un elemento con ese nombre.' });
-    return mutar(() => {
-      if (existente) {
-        const antes = existente.nombre;
-        existente.nombre = n;
-        if (tipo === 'subsistemas' || tipo === 'gruposSoporte') existente.ejemplo = false;
-        auditar(admin.id, 'CATALOGO', null, NOMBRES_CATALOGO[tipo] + ': ' + (antes === n ? n : antes + ' → ' + n));
-        return existente;
-      }
-      const prefijos = { sistemas: 'sis', subsistemas: 'sub', tiposProblema: 'tp', criticidades: 'cri', gruposSoporte: 'gs' };
-      const item = { id: U.uid(prefijos[tipo]), nombre: n, activo: true };
-      if (tipo === 'subsistemas') Object.assign(item, { sistemaId, ejemplo: false });
-      if (tipo === 'criticidades') Object.assign(item, { orden: lista.length + 1, clase: '' });
-      lista.push(item);
-      auditar(admin.id, 'CATALOGO', null, NOMBRES_CATALOGO[tipo] + ': alta de ' + n);
-      return item;
-    });
+    const ruta = '/api/catalogos/' + tipo;
+    const r = await pedirCatalogo((tk) => (existente
+      ? App.api.put(ruta + '/' + encodeURIComponent(id), { nombre: n }, tk)
+      : App.api.post(ruta, { nombre: n, sistema: datos.sistemaId || null }, tk)));
+    const item = itemDesdeApi(tipo, r);
+    const antes = existente ? existente.nombre : null;
+    if (existente) Object.assign(existente, item);
+    else cat[tipo].push(item);
+    registrarAuditoria(admin.id, 'CATALOGO', null, NOMBRES_CATALOGO[tipo] + ': ' + (!existente ? 'alta de ' + n : antes === n ? n : antes + ' → ' + n));
+    return existente || item;
   }
 
-  function cambiarActivoItem(tipo, id, admin, activo) {
+  async function cambiarActivoItem(tipo, id, admin, activo) {
     exigirAdmin(admin);
-    const item = porId(db[tipo] || [], id);
+    const item = porId(cat[tipo] || [], id);
     exigir(item, 'El elemento no existe.');
-    return mutar(() => {
-      item.activo = !!activo;
-      auditar(admin.id, 'CATALOGO', null, NOMBRES_CATALOGO[tipo] + ': ' + item.nombre + (activo ? ' · activado' : ' · desactivado'));
-      return item;
-    });
+    await pedirCatalogo((tk) => App.api.put('/api/catalogos/' + tipo + '/' + encodeURIComponent(id), { activo: !!activo }, tk));
+    item.activo = !!activo;
+    registrarAuditoria(admin.id, 'CATALOGO', null, NOMBRES_CATALOGO[tipo] + ': ' + item.nombre + (activo ? ' · activado' : ' · desactivado'));
+    return item;
   }
 
   const LIMITES_PARAMETROS = {

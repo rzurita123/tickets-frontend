@@ -30,8 +30,8 @@
   }
 
   async function cargarUsuarios(tk) {
-    const [usuarios, localidades] = await Promise.all([App.api.get('/api/usuarios', tk), App.api.get('/api/localidades', tk)]);
-    App.store.cargar(usuarios, localidades);
+    const [usuarios, localidades, catalogos] = await Promise.all(['usuarios', 'localidades', 'catalogos'].map((r) => App.api.get('/api/' + r, tk)));
+    App.store.cargar(usuarios, localidades, catalogos);
   }
 
   // Recupera la sesión al recargar la página.
