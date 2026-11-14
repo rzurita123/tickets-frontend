@@ -1,0 +1,415 @@
+/* Estadísticas del administrador. */
+(function (App) {
+  'use strict';
+
+  const U = App.util;
+  const h = U.h;
+  const D = App.dominio;
+
+  const POR_PAGINA = 10;
+
+  const PERIODOS = [
+    { clave: '30d', texto: 'Últimos 30 días', dias: 30 },
+    { clave: '3m', texto: 'Últimos 3 meses', meses: 3 },
+    { clave: '6m', texto: 'Últimos 6 meses', meses: 6 },
+    { clave: '12m', texto: 'Últimos 12 meses', meses: 12 },
+    { clave: 'todo', texto: 'Todo el historial' },
+  ];
+  const DEFECTOS = { periodo: '6m' };
+
+  /** Inicio del período y tramos en que se reparte. */
+  function calcularTramos(periodo, tickets) {
+    const ahora = new Date();
+    const lista = [];
+    if (periodo.dias) {
+      const inicio = U.inicioDelDia(ahora.getTime() - (periodo.dias - 1) * U.DIA);
+      for (let i = 0; i < periodo.dias; i++) {
+        const d = new Date(inicio.getFullYear(), inicio.getMonth(), inicio.getDate() + i);
+        lista.push({ clave: U.claveDia(d), etiqueta: U.diaMes(d), etiquetaLarga: U.fecha(d) });
+      }
+      return { desde: inicio.getTime(), grano: 'dia', lista };
+    }
+    let n = periodo.meses;
+    if (!n) {
+      const primero = tickets.reduce((min, t) => (t.creadoEn < min ? t.creadoEn : min), ahora.toISOString());
+      const p = new Date(primero);
+      n = (ahora.getFullYear() - p.getFullYear()) * 12 + ahora.getMonth() - p.getMonth() + 1;
+    }
+    const inicio = new Date(ahora.getFullYear(), ahora.getMonth() - (n - 1), 1);
+    for (let i = 0; i < n; i++) {
+      const d = new Date(inicio.getFullYear(), inicio.getMonth() + i, 1);
+      lista.push({ clave: U.claveMes(d), etiqueta: U.capitalizar(U.mesCorto(d)), etiquetaLarga: U.mesLargo(d) });
+    }
+    return { desde: periodo.meses ? inicio.getTime() : 0, grano: 'mes', lista };
+  }
+
+  App.vistas.estadisticas = function (ctx) {
+    if (ctx.usuario.rol === 'CLIENTE') return App.vistas.estadisticasCliente(ctx);
+    const S = App.store;
+    const ui = App.ui;
+    const C = App.comun;
+    const u = ctx.usuario;
+    const base = S.ticketsVisibles(u); // nunca incluye borradores
+    const q = Object.assign({}, DEFECTOS, ctx.query);
+    if (!PERIODOS.some((p) => p.clave === q.periodo)) q.periodo = DEFECTOS.periodo;
+    const vistasTabla = new Set(); // tarjetas que el usuario pasó a tabla
+
+    let T = calcularTramos(PERIODOS.find((p) => p.clave === q.periodo), base);
+
+    function nombreOperador(id) {
+      const o = S.usuario(id);
+      return o ? o.nombre + (o.activo === false ? ' (usuario inactivo)' : '') : '—';
+    }
+
+    // Dimensiones: clave del filtro, valor en el ticket y nombre.
+    const DIM = {
+      loc: { etiqueta: 'Localidad', valor: (t) => t.localidadId, nombre: (v) => S.nombre('localidades', v) },
+      sis: { etiqueta: 'Sistema', valor: (t) => t.sistemaId, nombre: (v) => S.nombre('sistemas', v) },
+      sub: {
+        etiqueta: 'Subsistema',
+        valor: (t) => t.subsistemaId || '',
+        nombre: (v) => {
+          const x = S.subsistema(v);
+          if (!x) return '—';
+          return q.sis ? x.nombre : S.nombre('sistemas', x.sistemaId) + ' › ' + x.nombre;
+        },
+      },
+      tp: { etiqueta: 'Tipo de problema', valor: (t) => t.tipoProblemaId || 'tp-nodef', nombre: (v) => S.nombre('tiposProblema', v) },
+      op: { etiqueta: 'Atiende', valor: (t) => t.operadorId || 'sin', nombre: (v) => (v === 'sin' ? 'Sin asignar' : nombreOperador(v)) },
+      estado: { etiqueta: 'Estado', valor: (t) => t.estado, nombre: (v) => S.nombreEstado(v) },
+      sol: { etiqueta: 'Solución reutilizable', valor: (t) => (t.estado === 'CERRADO' && t.solucion && t.solucion.solucionCatalogoId) || '', nombre: (v) => S.nombre('soluciones', v) },
+      tramo: {
+        etiqueta: 'Fecha',
+        valor: (t) => (T.grano === 'dia' ? U.claveDia(t.creadoEn) : U.claveMes(t.creadoEn)),
+        nombre: (v) => { const x = T.lista.find((b) => b.clave === v); return x ? x.etiquetaLarga : v; },
+      },
+    };
+    const CLAVES = ['loc', 'sis', 'sub', 'tp', 'op', 'estado', 'sol', 'tramo'];
+    Object.keys(DIM).forEach((k) => { if (!CLAVES.includes(k)) delete q[k]; });
+    if (q.tramo && !T.lista.some((b) => b.clave === q.tramo)) q.tramo = '';
+    if (q.sub) { const x = S.subsistema(q.sub); if (!x) q.sub = ''; else q.sis = x.sistemaId; }
+
+    // --------------------------------------------------------- Filtros ---
+    const ctrl = {};
+    ctrl.periodo = ui.select({ id: 'e-periodo', valor: q.periodo, opciones: PERIODOS.map((p) => ({ valor: p.clave, texto: p.texto })) });
+    ctrl.loc = ui.select({ id: 'e-loc', vacio: 'Todas', valor: q.loc, opciones: S.localidades().map((l) => ({ valor: l.id, texto: l.nombre })) });
+    ctrl.sis = ui.select({ id: 'e-sis', vacio: 'Todos', valor: q.sis, opciones: S.sistemas().map((s) => ({ valor: s.id, texto: s.nombre })) });
+    ctrl.sub = h('select', { id: 'e-sub', class: 'control' });
+    ctrl.tp = ui.select({ id: 'e-tp', vacio: 'Todos', valor: q.tp, opciones: S.catalogo('tiposProblema').map((x) => ({ valor: x.id, texto: x.nombre })) });
+    ctrl.op = ui.select({ id: 'e-op', vacio: 'Cualquiera', valor: q.op,
+      opciones: [{ valor: 'sin', texto: 'Sin asignar' }].concat(S.operadores().map((o) => ({ valor: o.id, texto: nombreOperador(o.id) }))) });
+    ctrl.estado = ui.select({ id: 'e-estado', vacio: 'Todos', valor: q.estado, opciones: D.ESTADOS_REGISTRADOS.map((e) => ({ valor: e, texto: S.nombreEstado(e) })) });
+
+    function cargarSubs() {
+      U.vaciar(ctrl.sub);
+      const subs = q.sis ? S.subsistemasDe(q.sis) : [];
+      ctrl.sub.append(h('option', { value: '' }, q.sis ? 'Todos' : 'Elegí primero el sistema'));
+      subs.forEach((x) => ctrl.sub.append(h('option', { value: x.id }, x.nombre)));
+      ctrl.sub.disabled = !q.sis;
+      ctrl.sub.value = q.sub && subs.some((x) => x.id === q.sub) ? q.sub : '';
+    }
+    cargarSubs();
+
+    const ETIQUETAS = { periodo: 'Período', loc: 'Localidad', sis: 'Sistema', sub: 'Subsistema', tp: 'Tipo de problema', op: 'Atiende', estado: 'Estado' };
+    const filtros = h('div', { class: 'filtros filtros-grilla', role: 'search', 'aria-label': 'Filtros de estadísticas' },
+      Object.keys(ctrl).map((k) => ui.campo({ nombre: k, id: ctrl[k].id, etiqueta: ETIQUETAS[k], control: ctrl[k] })));
+    const activos = h('div', { class: 'fila-sm' });
+
+    function actualizarControles() {
+      Object.keys(ctrl).forEach((k) => { if (k !== 'sub') ctrl[k].value = q[k] || ''; });
+      cargarSubs();
+    }
+
+    function sincronizar() {
+      const limpio = {};
+      ['periodo'].concat(CLAVES, ['p']).forEach((k) => {
+        if (q[k] && q[k] !== DEFECTOS[k] && !(k === 'p' && Number(q[k]) <= 1)) limpio[k] = q[k];
+      });
+      App.router.actualizarQuery(limpio);
+    }
+
+    function cambiar(k, v) {
+      const foco = capturarFoco();
+      q[k] = v || '';
+      if (k === 'sis') q.sub = '';
+      if (k === 'sub' && v) { const x = S.subsistema(v); if (x) q.sis = x.sistemaId; }
+      if (k === 'periodo') {
+        T = calcularTramos(PERIODOS.find((p) => p.clave === q.periodo), base);
+        q.tramo = '';
+      }
+      q.p = '';
+      actualizarControles();
+      sincronizar();
+      pintar(foco);
+    }
+
+    function limpiarTodo() {
+      CLAVES.forEach((k) => { q[k] = ''; });
+      q.p = '';
+      actualizarControles();
+      sincronizar();
+      pintar();
+    }
+
+    Object.keys(ctrl).forEach((k) => ctrl[k].addEventListener('change', () => cambiar(k, ctrl[k].value)));
+
+    function pintarActivos() {
+      U.vaciar(activos);
+      const lista = CLAVES.filter((k) => q[k]);
+      lista.forEach((k) => {
+        const texto = DIM[k].etiqueta + ': ' + DIM[k].nombre(q[k]);
+        activos.append(h('span', { class: 'chip-activo' }, texto,
+          h('button', { type: 'button', 'aria-label': 'Quitar filtro ' + texto, onClick: () => cambiar(k, '') }, ui.icono('x', 'i-sm'))));
+      });
+      if (lista.length > 1) activos.append(h('button', { type: 'button', class: 'enlace-boton chico', onClick: limpiarTodo }, 'Limpiar filtros'));
+      activos.hidden = !lista.length;
+    }
+
+    // ---------------------------------------------- Foco al redibujar ---
+    const cuerpo = h('div', { class: 'pila-lg' });
+
+    function capturarFoco() {
+      const a = document.activeElement;
+      if (!a || !cuerpo.contains(a) || a.dataset.clave == null) return null;
+      const grupo = a.closest('[role="group"]');
+      return grupo ? { grupo: grupo.getAttribute('aria-label'), clave: a.dataset.clave } : null;
+    }
+
+    function restaurarFoco(f) {
+      if (!f) return;
+      const grupo = U.$$('[role="group"]', cuerpo).find((g) => g.getAttribute('aria-label') === f.grupo);
+      const el = grupo && U.$$('[data-clave]', grupo).find((x) => x.dataset.clave === f.clave);
+      if (el) el.focus({ preventScroll: true });
+    }
+
+    // ------------------------------------------------------- Cálculos ---
+    function filtrar(lista, excepto) {
+      const ex = new Set(excepto || []);
+      if (ex.has('sis')) ex.add('sub'); // el gráfico por sistema muestra todos los sistemas
+      const aplicar = CLAVES.filter((k) => q[k] && !ex.has(k));
+      return lista.filter((t) => aplicar.every((k) => DIM[k].valor(t) === q[k]));
+    }
+
+    /** Cantidades por categoría. */
+    function contar(k, lista, op) {
+      const o = op || {};
+      const m = U.contarPor(lista, DIM[k].valor);
+      let datos;
+      if (o.categorias) {
+        datos = o.categorias.map((c) => ({ clave: c, etiqueta: DIM[k].nombre(c), valor: m.get(c) || 0 }));
+      } else {
+        datos = Array.from(m.entries())
+          .filter(([c]) => c)
+          .map(([c, n]) => ({ clave: c, etiqueta: DIM[k].nombre(c), valor: n }))
+          .sort((a, b) => b.valor - a.valor || a.etiqueta.localeCompare(b.etiqueta, 'es'));
+        if (o.limite && datos.length > o.limite) datos = datos.slice(0, o.limite);
+        // La categoría elegida siempre se ve.
+        if (q[k] && !datos.some((d) => d.clave === q[k])) datos.push({ clave: q[k], etiqueta: DIM[k].nombre(q[k]), valor: m.get(q[k]) || 0 });
+      }
+      return datos;
+    }
+
+    function tarjetaBarras(op) {
+      const total = op.total != null ? op.total : op.datos.reduce((a, d) => a + d.valor, 0);
+      const hayDatos = op.datos.some((d) => d.valor > 0);
+      return App.charts.tarjeta({
+        titulo: op.titulo,
+        descripcion: op.descripcion,
+        grafico: App.charts.barras({ titulo: op.titulo, datos: op.datos, seleccion: q[op.clave] || null, alSeleccionar: (v) => cambiar(op.clave, v), total, rotulosLargos: op.rotulosLargos }),
+        tabla: {
+          columnas: [op.columna, 'Tickets', op.columnaPorcentaje || '% del total'],
+          filas: op.datos.map((d) => [d.etiqueta, U.formatoNumero(d.valor), U.porcentaje(d.valor, total)]),
+        },
+        vacio: hayDatos ? null : h('p', { class: 'chico suave' }, op.textoVacio || 'No hay tickets con estos filtros.'),
+        pie: op.pie,
+        ancho: op.ancho,
+        enTabla: vistasTabla.has(op.titulo),
+        alCambiarVista: (v) => { if (v) vistasTabla.add(op.titulo); else vistasTabla.delete(op.titulo); },
+      });
+    }
+
+    function tarjetaFecha(enPeriodo) {
+      const periodo = PERIODOS.find((p) => p.clave === q.periodo);
+      const lista = filtrar(enPeriodo, ['tramo']);
+      const m = U.contarPor(lista, DIM.tramo.valor);
+      const datos = T.lista.map((b) => Object.assign({}, b, { valor: m.get(b.clave) || 0 }));
+      const titulo = T.grano === 'dia' ? 'Tickets registrados por día' : 'Tickets registrados por mes';
+      return App.charts.tarjeta({
+        titulo,
+        descripcion: periodo.texto,
+        grafico: App.charts.columnas({ titulo, datos, seleccion: q.tramo || null, alSeleccionar: (v) => cambiar('tramo', v) }),
+        tabla: { columnas: [T.grano === 'dia' ? 'Día' : 'Mes', 'Tickets'], filas: datos.map((d) => [d.etiquetaLarga, U.formatoNumero(d.valor)]) },
+        vacio: lista.length ? null : h('p', { class: 'chico suave' }, 'No hay tickets registrados en este período.'),
+        ancho: true,
+        enTabla: vistasTabla.has(titulo),
+        alCambiarVista: (v) => { if (v) vistasTabla.add(titulo); else vistasTabla.delete(titulo); },
+      });
+    }
+
+    function indicadores(filtrados) {
+      const cuenta = (e) => filtrados.filter((t) => t.estado === e).length;
+      const enCurso = filtrados.filter((t) => D.ESTADOS_ACTIVOS.includes(t.estado)).length;
+      const cerrados = cuenta('CERRADO');
+      const conCatalogo = filtrados.filter((t) => t.estado === 'CERRADO' && t.solucion && t.solucion.solucionCatalogoId).length;
+      const periodo = PERIODOS.find((p) => p.clave === q.periodo);
+      const lista = [
+        C.mosaico({ etiqueta: 'Tickets registrados', icono: 'ticket', valor: filtrados.length, detalle: q.tramo ? DIM.tramo.nombre(q.tramo) : periodo.texto }),
+        C.mosaico({ etiqueta: 'En curso', icono: 'reloj', valor: enCurso, detalle: [U.plural(cuenta('ABIERTO'), 'abierto', 'abiertos'), U.plural(cuenta('EN_PROCESO'), 'en proceso', 'en proceso'), U.plural(cuenta('BLOQUEADO'), 'bloqueado', 'bloqueados'), U.plural(filtrados.filter((t) => t.elevadoA && D.ESTADOS_ACTIVOS.includes(t.estado)).length, 'elevado', 'elevados')].join(' · ') }),
+        C.mosaico({ etiqueta: 'Cerrados', icono: 'check', valor: cerrados, detalle: U.porcentaje(cerrados, filtrados.length) + ' de los registrados' }),
+        C.mosaico({ etiqueta: 'Resueltos con solución reutilizable', icono: 'libro', valor: conCatalogo, detalle: U.porcentaje(conCatalogo, cerrados) + ' de los cerrados' }),
+      ];
+      return h('div', { class: 'mosaicos', 'aria-live': 'polite' }, lista);
+    }
+
+    /** Tiempos de atención del filtro. */
+    function tiempos(filtrados) {
+      const resueltos = filtrados.filter((t) => t.estado === 'CERRADO' && !t.registroDirecto);
+      const ms = resueltos.map((t) => S.duracionTicket(t)).sort((a, b) => a - b);
+      const promedio = ms.length ? ms.reduce((a, b) => a + b, 0) / ms.length : 0;
+      const mediana = ms.length ? (ms.length % 2 ? ms[(ms.length - 1) / 2] : (ms[ms.length / 2 - 1] + ms[ms.length / 2]) / 2) : 0;
+      const enCurso = filtrados.filter((t) => D.ESTADOS_ACTIVOS.includes(t.estado));
+      const demorados = enCurso.filter((t) => S.duracionTicket(t) >= S.UMBRALES_DURACION.critico);
+      const masAntiguo = enCurso.slice().sort((a, b) => a.creadoEn.localeCompare(b.creadoEn))[0];
+
+      // Promedio de resolución por sistema, en horas.
+      const porSis = new Map();
+      resueltos.forEach((t) => { const x = porSis.get(t.sistemaId) || { suma: 0, n: 0 }; x.suma += S.duracionTicket(t); x.n++; porSis.set(t.sistemaId, x); });
+      const datosSis = Array.from(porSis, ([clave, x]) => ({ clave, etiqueta: S.nombre('sistemas', clave), valor: Math.round(x.suma / x.n / U.HORA), n: x.n }))
+        .sort((a, b) => b.valor - a.valor);
+
+      // Antigüedad de los tickets en curso.
+      const TRAMOS = [['menos-1', 'Menos de 1 día', 0, U.DIA], ['1-3', '1 a 3 días', U.DIA, 3 * U.DIA], ['3-7', '3 a 7 días', 3 * U.DIA, 7 * U.DIA], ['mas-7', 'Más de 7 días', 7 * U.DIA, Infinity]];
+      const datosAntig = TRAMOS.map(([clave, etiqueta, desde, hasta]) => ({ clave, etiqueta, valor: enCurso.filter((t) => { const d = S.duracionTicket(t); return d >= desde && d < hasta; }).length }));
+
+      return h('section', { class: 'pila', 'aria-labelledby': 'sec-tiempos' },
+        h('h2', { id: 'sec-tiempos', class: 'titulo-seccion' }, 'Tiempos de atención'),
+        h('div', { class: 'mosaicos' },
+          C.mosaico({ etiqueta: 'Resolución promedio', icono: 'historial', valor: ms.length ? U.duracionCorta(promedio) : '—', detalle: U.plural(ms.length, 'ticket resuelto', 'tickets resueltos') + ' (sin los registrados ya resueltos)' }),
+          C.mosaico({ etiqueta: 'Resolución mediana', icono: 'historial', valor: ms.length ? U.duracionCorta(mediana) : '—', detalle: 'La mitad se resolvió en menos de eso' }),
+          C.mosaico({ etiqueta: 'En curso hace más de 3 días', icono: 'alerta', valor: demorados.length, tono: demorados.length ? 'rojo' : null, detalle: 'de ' + U.plural(enCurso.length, 'ticket en curso', 'tickets en curso') }),
+          C.mosaico({ etiqueta: 'Abierto hace más tiempo', icono: 'reloj', valor: masAntiguo ? U.duracionCorta(S.duracionTicket(masAntiguo)) : '—', detalle: masAntiguo ? '#' + masAntiguo.numero + ' · ' + S.nombre('localidades', masAntiguo.localidadId) : 'No hay tickets en curso', href: masAntiguo ? '#/tickets/' + masAntiguo.numero : null })),
+        h('div', { class: 'grid-graficos' },
+          App.charts.tarjeta({
+            titulo: 'Resolución promedio por sistema',
+            descripcion: 'En horas, desde que se crea hasta que se cierra',
+            grafico: App.charts.barras({ titulo: 'Resolución promedio por sistema', datos: datosSis, total: 0, unidad: ['hora', 'horas'], seleccion: q.sis || null, alSeleccionar: (v) => cambiar('sis', v) }),
+            tabla: { columnas: ['Sistema', 'Promedio', 'Tickets resueltos'], filas: datosSis.map((d) => [d.etiqueta, U.duracionCorta(d.valor * U.HORA), U.formatoNumero(d.n)]) },
+            vacio: datosSis.length ? null : h('p', { class: 'chico suave' }, 'No hay tickets resueltos con estos filtros.'),
+          }),
+          App.charts.tarjeta({
+            titulo: 'Antigüedad de los tickets en curso',
+            descripcion: 'Cuánto hace que están abiertos',
+            grafico: App.charts.barras({ titulo: 'Antigüedad de los tickets en curso', datos: datosAntig, total: enCurso.length }),
+            tabla: { columnas: ['Antigüedad', 'Tickets'], filas: datosAntig.map((d) => [d.etiqueta, U.formatoNumero(d.valor)]) },
+            vacio: enCurso.length ? null : h('p', { class: 'chico suave' }, 'No hay tickets en curso con estos filtros.'),
+          })));
+    }
+
+    function tarjetaDetalle(filtrados) {
+      const lista = filtrados.slice().sort(C.ORDENES.recientes.fn);
+      const cont = h('div');
+      const cols = ['numero', 'ticket', 'localidad', 'estado', 'atiende', 'duracion', 'creado'];
+      const idTitulo = 'sec-detalle';
+      function pintarTabla() {
+        U.vaciar(cont);
+        if (!lista.length) {
+          cont.append(ui.vacio({
+            icono: 'buscar',
+            titulo: 'No hay tickets con estos filtros',
+            texto: 'Probá con un período más largo o quitá algún filtro.',
+            accion: CLAVES.some((k) => q[k]) ? h('button', { type: 'button', class: 'btn btn-neutro', onClick: limpiarTodo }, 'Limpiar filtros') : null,
+          }));
+          return;
+        }
+        const paginas = Math.max(1, Math.ceil(lista.length / POR_PAGINA));
+        const pagina = Math.min(Math.max(1, Number(q.p) || 1), paginas);
+        cont.append(
+          C.tablaTickets(lista.slice((pagina - 1) * POR_PAGINA, pagina * POR_PAGINA), cols, { caption: 'Tickets del filtro' }),
+          ui.paginador({
+            total: lista.length, pagina, porPagina: POR_PAGINA,
+            alCambiar: (p) => {
+              q.p = String(p);
+              sincronizar();
+              pintarTabla();
+              const titulo = document.getElementById(idTitulo);
+              if (titulo) titulo.scrollIntoView({ block: 'start' });
+            },
+          }));
+      }
+      pintarTabla();
+      return h('section', { class: 'card sin-padding', 'aria-labelledby': idTitulo },
+        h('div', { class: 'card-titulo', style: 'padding: 18px 20px 0' },
+          h('h2', { id: idTitulo }, 'Tickets del filtro'),
+          h('span', { class: 'suave' }, U.plural(lista.length, 'ticket', 'tickets'))),
+        cont);
+    }
+
+    // --------------------------------------------------------- Pintar ---
+    function pintar(foco) {
+      pintarActivos();
+      const enPeriodo = base.filter((t) => new Date(t.creadoEn).getTime() >= T.desde);
+      const filtrados = filtrar(enPeriodo);
+      const sub = (excepto) => filtrar(enPeriodo, excepto);
+
+      const tarjetas = [
+        tarjetaBarras({
+          clave: 'estado', titulo: 'Estado actual', columna: 'Estado',
+          datos: contar('estado', sub(['estado']), { categorias: D.ESTADOS_REGISTRADOS }),
+        }),
+        tarjetaBarras({
+          clave: 'sis', titulo: 'Por sistema', columna: 'Sistema',
+          datos: contar('sis', sub(['sis'])),
+        }),
+        (() => {
+          const lista = sub(['sub']);
+          const datos = contar('sub', lista, { limite: q.sis ? 0 : 10 });
+          return tarjetaBarras({
+            clave: 'sub',
+            titulo: q.sis ? 'Subsistemas de ' + S.nombre('sistemas', q.sis) : 'Por subsistema',
+            columna: 'Subsistema',
+            descripcion: q.sis ? null : 'Top 10',
+            datos,
+            total: lista.length,
+            rotulosLargos: !q.sis,
+          });
+        })(),
+      ];
+      const cerradosCatalogo = sub(['sol']).filter((t) => DIM.sol.valor(t));
+      tarjetas.push(
+        tarjetaBarras({
+          clave: 'tp', titulo: 'Por tipo de problema', columna: 'Tipo de problema',
+          datos: contar('tp', sub(['tp']), { categorias: S.catalogo('tiposProblema').map((x) => x.id) }),
+        }),
+        tarjetaBarras({
+          clave: 'op', titulo: 'Por operador', columna: 'Atiende',
+          datos: contar('op', sub(['op'])),
+        }),
+        tarjetaBarras({
+          clave: 'loc', titulo: 'Por localidad', columna: 'Localidad',
+          datos: contar('loc', sub(['loc'])),
+        }),
+        tarjetaBarras({
+          clave: 'sol', titulo: 'Soluciones reutilizables más usadas', columna: 'Solución reutilizable', columnaPorcentaje: '% de estos cierres',
+          datos: contar('sol', cerradosCatalogo, { limite: 8 }),
+          total: cerradosCatalogo.length,
+          rotulosLargos: true,
+          textoVacio: 'Ninguna resolución de este filtro usó una solución reutilizable.',
+        }));
+
+      U.vaciar(cuerpo).append(
+        indicadores(filtrados),
+        tiempos(filtrados),
+        h('h2', { class: 'titulo-seccion' }, 'Volumen y clasificación'),
+        h('div', { class: 'grid-graficos' }, tarjetaFecha(enPeriodo), tarjetas),
+        tarjetaDetalle(filtrados));
+      restaurarFoco(foco);
+    }
+
+    pintar();
+
+    return h('div', { class: 'pila-lg' },
+      ui.cabecera({ titulo: 'Estadísticas' }),
+      h('section', { class: 'card pila-sm', 'aria-label': 'Filtros' }, filtros, activos),
+      cuerpo);
+  };
+})(window.App = window.App || {});
