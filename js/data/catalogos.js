@@ -2,20 +2,6 @@
 (function (App) {
   'use strict';
 
-  const localidades = [
-    { id: 'loc-artigas', nombre: 'Artigas' },
-    { id: 'loc-canelones', nombre: 'Canelones' },
-    { id: 'loc-carmelo', nombre: 'Carmelo' },
-    { id: 'loc-durazno', nombre: 'Durazno' },
-    { id: 'loc-florida', nombre: 'Florida' },
-    { id: 'loc-lagomar', nombre: 'Lagomar' },
-    { id: 'loc-pando', nombre: 'Pando' },
-    { id: 'loc-paysandu', nombre: 'Paysandú' },
-    { id: 'loc-rosario', nombre: 'Rosario' },
-    { id: 'loc-santa-lucia', nombre: 'Santa Lucía' },
-    { id: 'loc-trinidad', nombre: 'Trinidad' },
-  ];
-
   const sistemas = [
     { id: 'sis-liquidacion', nombre: 'Liquidación' },
     { id: 'sis-caja', nombre: 'Caja' },
@@ -86,19 +72,6 @@
     { id: 'gs-proveedor-terminales', nombre: 'Proveedor de terminales' },
   ];
 
-  // Usuarios de prueba; los correos usan el dominio .example.
-  const usuarios = [
-    // Mesa de ayuda de ORMEN
-    { id: 'u-vpereira', usuario: 'vpereira', nombre: 'Valeria Pereira', rol: 'OPERADOR', email: 'vpereira@ormen.example', cargo: 'Mesa de ayuda' },
-    { id: 'u-nacosta', usuario: 'nacosta', nombre: 'Nicolás Acosta', rol: 'OPERADOR', email: 'nacosta@ormen.example', cargo: 'Mesa de ayuda' },
-    // Gestión de ORMEN
-    { id: 'u-scabrera', usuario: 'scabrera', nombre: 'Silvia Cabrera', rol: 'ADMINISTRADOR', email: 'scabrera@ormen.example', cargo: 'Gerencia de operaciones' },
-    { id: 'u-ralvarez', usuario: 'ralvarez', nombre: 'Rodrigo Álvarez', rol: 'ADMINISTRADOR', email: 'ralvarez@ormen.example', cargo: 'Responsable de sistemas' },
-    // Clientes (usuarios de bancas y agencias)
-    { id: 'u-mtechera', usuario: 'mtechera', nombre: 'Marcelo Techera', rol: 'CLIENTE', email: 'mtechera@pando.example', localidadId: 'loc-pando', cargo: 'Encargado' },
-    { id: 'u-lgomez', usuario: 'lgomez', nombre: 'Laura Gómez', rol: 'CLIENTE', email: 'lgomez@lagomar.example', localidadId: 'loc-lagomar', cargo: 'Encargada' },
-  ];
-
   /** Pesos provisorios de la sugerencia de soluciones. */
   const parametros = {
     pesoSistema: 3,
@@ -109,9 +82,5 @@
     maxResultados: 6,
   };
 
-  /** Usuarios destacados en la pantalla de ingreso (uno por rol). */
-  // Todos los usuarios de prueba, en el orden en que aparecen en el ingreso.
-  const accesosRapidos = ['u-vpereira', 'u-nacosta', 'u-scabrera', 'u-ralvarez', 'u-mtechera', 'u-lgomez'];
-
-  App.catalogos = { localidades, sistemas, subsistemas, tiposProblema, criticidades, gruposSoporte, usuarios, parametros, accesosRapidos };
+  App.catalogos = { sistemas, subsistemas, tiposProblema, criticidades, gruposSoporte, parametros };
 })(window.App = window.App || {});

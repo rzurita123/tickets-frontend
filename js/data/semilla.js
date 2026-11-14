@@ -2,7 +2,7 @@
 (function (App) {
   'use strict';
 
-  const VERSION = 6;
+  const VERSION = 8;
 
   // ------------------------------------------------- Imágenes de ejemplo ---
 
@@ -363,8 +363,8 @@
     ['sis-correos', 6], ['sis-adm-usuarios', 7], ['sis-instalaciones', 4], ['sis-todos-terminales', 2],
   ];
   const PESO_LOCALIDAD = [
-    ['loc-pando', 24], ['loc-rosario', 10], ['loc-artigas', 6], ['loc-durazno', 6], ['loc-carmelo', 5], ['loc-canelones', 5],
-    ['loc-florida', 4], ['loc-paysandu', 5], ['loc-lagomar', 5], ['loc-santa-lucia', 3], ['loc-trinidad', 3],
+    ['pando', 24], ['rosario', 10], ['artigas', 6], ['durazno', 6], ['carmelo', 5], ['canelones', 5],
+    ['florida', 4], ['paysandu', 5], ['lagomar', 5], ['santa-lucia', 3], ['trinidad', 3],
   ];
   const PESO_OPERADOR = [['u-vpereira', 52], ['u-nacosta', 48]];
 
@@ -406,7 +406,7 @@
 
   // ------------------------------------------------------------ Generador ---
 
-  function generar() {
+  function generar(usuarios, localidades) {
     const U = App.util;
     const C = App.catalogos;
     const D = App.dominio;
@@ -425,7 +425,8 @@
     let n = 0;
     const nuevoId = (p) => p + '-' + (++n).toString(36);
 
-    const usuarios = C.usuarios.map((u) => Object.assign({ activo: true, localidadId: null, creadoEn: iso(ahora - 320 * DIA) }, u));
+    const loc = (clave) => (localidades.find((l) => U.normalizar(l.nombre).replace(/ /g, '-') === clave) || {}).id || '';
+    const pesoLocalidad = PESO_LOCALIDAD.map(([clave, peso]) => [loc(clave), peso]).filter(([id]) => id);
     const usuarioPorId = new Map(usuarios.map((u) => [u.id, u]));
     const usu = (id) => usuarioPorId.get(id);
     const clientesPorLocalidad = U.agruparPor(usuarios.filter((u) => u.rol === 'CLIENTE' && u.activo), (u) => u.localidadId);
@@ -565,7 +566,7 @@
     for (let i = 0; i < TOTAL; i++) {
       const sistemaId = elegirPeso(PESO_SISTEMA);
       const plantilla = elegirPeso(plantillasPorSistema.get(sistemaId).map((p) => [p, p.peso || 1]));
-      const localidadId = elegirPeso(PESO_LOCALIDAD);
+      const localidadId = elegirPeso(pesoLocalidad);
       const edadDias = 272 * Math.pow(rnd(), 1.08);
       const d = new Date(ahora - edadDias * DIA);
       d.setHours(8 + Math.floor(rnd() * 13), Math.floor(rnd() * 60), Math.floor(rnd() * 60), 0);
@@ -594,7 +595,7 @@
     // 1) Pando: impresora, sin asignar, con foto.
     {
       const t = nuevoTicket({
-        plantilla: p('p-term-impresion'), localidadId: 'loc-pando', creador: usu('u-mtechera'), creadoMs: recienteOAyer(25), criticidadId: 'cri-alta',
+        plantilla: p('p-term-impresion'), localidadId: loc('pando'), creador: usu('u-mtechera'), creadoMs: recienteOAyer(25), criticidadId: 'cri-alta',
         descripcion: 'La impresora de la terminal 2 no saca el comprobante de la jugada. El papel está bien puesto y la terminal enciende normal. Adjunto foto del mensaje que aparece.',
       });
       t.adjuntos.push({ id: nuevoId('img'), nombre: 'mensaje-terminal.png', dataUrl: IMG_ERROR, autorId: 'u-mtechera', fecha: t.creadoEn });
@@ -604,7 +605,7 @@
     {
       const ms = haceDias(1, 19, 40);
       const t = nuevoTicket({
-        plantilla: p('p-caja-diferencia'), localidadId: 'loc-pando', creador: usu('u-mtechera'), creadoMs: ms, criticidadId: 'cri-media',
+        plantilla: p('p-caja-diferencia'), localidadId: loc('pando'), creador: usu('u-mtechera'), creadoMs: ms, criticidadId: 'cri-media',
         descripcion: 'Al cerrar la caja de anoche quedó una diferencia de $ 1.250 entre el total del sistema y el efectivo contado.',
       });
       asignar(t, ms + 12 * MIN, 'u-vpereira', 'u-vpereira');
@@ -617,7 +618,7 @@
     {
       const ms = haceDias(2, 10, 15);
       const t = nuevoTicket({
-        plantilla: p('p-online-conexion'), localidadId: 'loc-pando', creador: usu('u-nacosta'), creadoMs: ms, criticidadId: 'cri-alta',
+        plantilla: p('p-online-conexion'), localidadId: loc('pando'), creador: usu('u-nacosta'), creadoMs: ms, criticidadId: 'cri-alta',
         descripcion: 'La agencia llama porque las tres terminales perdieron la conexión con On-Line desde las 9:50.',
       });
       comentar(t, ms + 8 * MIN, 'u-nacosta', 'Estamos revisando la conexión de la agencia. Les avisamos por acá.', 'PUBLICO');
@@ -632,7 +633,7 @@
     {
       const ms = recienteOAyer(185);
       const t = nuevoTicket({
-        plantilla: p('p-term-bloqueada'), localidadId: 'loc-lagomar', creador: usu('u-lgomez'), creadoMs: ms, criticidadId: 'cri-alta',
+        plantilla: p('p-term-bloqueada'), localidadId: loc('lagomar'), creador: usu('u-lgomez'), creadoMs: ms, criticidadId: 'cri-alta',
         descripcion: 'La terminal 1 muestra el mensaje de terminal bloqueada y no permite vender.',
       });
       asignar(t, ms + 9 * MIN, 'u-nacosta', 'u-nacosta');
@@ -641,27 +642,27 @@
     }
     // 5) Lagomar · Laura: Abierto sin asignar.
     tickets.push(nuevoTicket({
-      plantilla: p('p-correo-no-llegan'), localidadId: 'loc-lagomar', creador: usu('u-lgomez'), creadoMs: recienteOAyer(70), criticidadId: 'cri-baja',
+      plantilla: p('p-correo-no-llegan'), localidadId: loc('lagomar'), creador: usu('u-lgomez'), creadoMs: recienteOAyer(70), criticidadId: 'cri-baja',
       descripcion: 'Desde el viernes no nos llegan los correos con los resúmenes diarios.',
     }));
     // 6) Durazno: en proceso, atiende Valeria.
     {
       const t = nuevoTicket({
-        plantilla: p('p-liq-no-aparece'), localidadId: 'loc-durazno', creador: usu('u-vpereira'), creadoMs: recienteOAyer(40), criticidadId: 'cri-media',
+        plantilla: p('p-liq-no-aparece'), localidadId: loc('durazno'), creador: usu('u-vpereira'), creadoMs: recienteOAyer(40), criticidadId: 'cri-media',
         descripcion: 'Llaman de Durazno porque no ven la liquidación de hoy. Ayer a esta hora ya estaba disponible.',
       });
       tickets.push(t);
     }
     // 7) Pando · cargado por Valeria: alta de usuario, En proceso.
     tickets.push(nuevoTicket({
-      plantilla: p('p-usu-alta'), localidadId: 'loc-pando', creador: usu('u-vpereira'), creadoMs: recienteOAyer(150), criticidadId: 'cri-baja',
+      plantilla: p('p-usu-alta'), localidadId: loc('pando'), creador: usu('u-vpereira'), creadoMs: recienteOAyer(150), criticidadId: 'cri-baja',
       descripcion: 'Marcelo pide un usuario para una cajera nueva que empieza mañana.',
     }));
     // 8) Pando · Marcelo: usuario bloqueado, cerrado ayer con mensaje público.
     {
       const ms = haceDias(1, 11, 5);
       const t = nuevoTicket({
-        plantilla: p('p-usu-bloqueado'), localidadId: 'loc-pando', creador: usu('u-mtechera'), creadoMs: ms, criticidadId: 'cri-alta',
+        plantilla: p('p-usu-bloqueado'), localidadId: loc('pando'), creador: usu('u-mtechera'), creadoMs: ms, criticidadId: 'cri-alta',
         descripcion: 'No podemos ingresar con el usuario del turno de la tarde: dice usuario bloqueado.',
       });
       asignar(t, ms + 6 * MIN, 'u-nacosta', 'u-nacosta');
@@ -674,7 +675,7 @@
     {
       const ms = haceDias(9, 9, 30);
       const t = nuevoTicket({
-        plantilla: p('p-env-incompleto'), localidadId: 'loc-lagomar', creador: usu('u-lgomez'), creadoMs: ms, criticidadId: 'cri-media',
+        plantilla: p('p-env-incompleto'), localidadId: loc('lagomar'), creador: usu('u-lgomez'), creadoMs: ms, criticidadId: 'cri-media',
         descripcion: 'El archivo de jugadas que nos llegó hoy está incompleto: faltan los registros de la tarde.',
       });
       asignar(t, ms + 10 * MIN, 'u-nacosta', 'u-nacosta');
@@ -691,7 +692,7 @@
     {
       const ms = haceDias(3, 15, 10);
       const t = nuevoTicket({
-        plantilla: p('p-term-sincro'), localidadId: 'loc-pando', creador: usu('u-nacosta'), creadoMs: ms, criticidadId: 'cri-media',
+        plantilla: p('p-term-sincro'), localidadId: loc('pando'), creador: usu('u-nacosta'), creadoMs: ms, criticidadId: 'cri-media',
         titulo: 'Revisar las terminales de Pando antes del cambio de versión',
         descripcion: 'Interno: antes de actualizar la versión, verificar que las tres terminales de Pando sincronizan bien. No avisar a la agencia hasta tener la fecha confirmada.',
       });
@@ -806,11 +807,11 @@
     }
     const borradores = [
       borrador({
-        ms: ahora - 15 * MIN, titulo: 'No permite abrir la caja', localidadId: 'loc-carmelo', sistemaId: 'sis-caja', subsistemaId: 'sub-caja-apertura', criticidadId: 'cri-media',
+        ms: ahora - 15 * MIN, titulo: 'No permite abrir la caja', localidadId: loc('carmelo'), sistemaId: 'sis-caja', subsistemaId: 'sub-caja-apertura', criticidadId: 'cri-media',
         descripcion: 'Llama Gustavo de Carmelo. No puede abrir la caja; dice que ayer cerraron normal. Verificar si quedó abierta la caja del día anterior.',
       }),
       borrador({
-        ms: ahora - 2 * HORA - 10 * MIN, localidadId: 'loc-florida',
+        ms: ahora - 2 * HORA - 10 * MIN, localidadId: loc('florida'),
         descripcion: 'Florida: preguntan por el reporte de premios del mes pasado. Volver a llamar después de las 15 h.',
       }),
     ];
@@ -905,8 +906,6 @@
       version: VERSION,
       generadoEn: iso(ahora),
       secuencias: { ticket: 1001 + tickets.length },
-      usuarios,
-      localidades: C.localidades.map((l) => Object.assign({ activa: true }, l)),
       sistemas: C.sistemas.map((x) => Object.assign({ activo: true }, x)),
       subsistemas: C.subsistemas.map((x) => Object.assign({ activo: true }, x)),
       tiposProblema: C.tiposProblema.map((x) => Object.assign({ activo: true }, x)),

@@ -506,29 +506,10 @@ body.con-modal { overflow: hidden; }
   max-width: 680px; width: 100%; margin: 0 auto;
 }
 .login-contenido h2 { font-size: 30px; }
-.usuarios-demo { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
-.usuario-demo {
-  --acento: var(--azul);
-  display: flex; align-items: center; gap: 14px; padding: 20px 18px; min-height: 112px; background: var(--superficie);
-  border: 2px solid var(--borde); border-radius: var(--radio-lg); text-align: left;
-  transition: border-color .15s, box-shadow .15s, transform .15s; position: relative;
-}
-.usuario-demo[data-rol="ADMINISTRADOR"] { --acento: var(--tinta); }
-.usuario-demo[data-rol="CLIENTE"] { --acento: var(--dorado-texto); }
-.usuario-demo:hover { border-color: var(--acento); box-shadow: var(--sombra-media); transform: translateY(-2px); }
-.usuario-demo .datos { display: flex; flex-direction: column; min-width: 0; gap: 2px; }
-.usuario-demo .rol { font-size: 13px; font-weight: 600; color: var(--acento); }
-.usuario-demo .nombre { font-family: var(--fuente-titulos); font-size: 18px; font-weight: 600; color: var(--tinta); line-height: 1.2; }
-.usuario-demo .detalle { font-size: 14px; color: var(--texto-suave); }
-.usuario-demo .flecha { margin-left: auto; color: var(--acento); opacity: 0; transform: translateX(-4px); transition: opacity .15s, transform .15s; }
-.usuario-demo:hover .flecha, .usuario-demo:focus-visible .flecha { opacity: 1; transform: none; }
-.login-sep { display: flex; align-items: center; gap: 14px; color: var(--texto-suave); font-size: 14px; margin-top: 12px; }
-.login-sep::before, .login-sep::after { content: ""; flex: 1; height: 1px; background: var(--borde); }
 .login-form { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto; gap: 12px; align-items: end; }
 .login-form > [role="alert"] { grid-column: 1 / -1; }
 .login-form > [role="alert"]:empty { display: none; }
 .login-form .btn { min-height: 46px; }
-.login-clave { font-size: 13.5px; color: var(--texto-suave); }
 
 /* ---------- Inicio ---------- */
 .inicio-operador { gap: 12px; }
@@ -780,7 +761,7 @@ a.mosaico:hover, button.mosaico:hover { text-decoration: none; background: var(-
   .login-panel h1 { font-size: 36px; }
   .main { padding-top: 22px; }
   .fecha-header { display: none; }
-  .grid-2, .grid-3, .usuarios-demo, .login-form { grid-template-columns: minmax(0, 1fr); }
+  .grid-2, .grid-3, .login-form { grid-template-columns: minmax(0, 1fr); }
   .grid-4 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .card { padding: 16px; }
   .modal-cabecera, .modal-cuerpo, .modal-pie { padding-left: 16px; padding-right: 16px; }
