@@ -2,7 +2,7 @@
 (function (App) {
   'use strict';
 
-  const VERSION = 8;
+  const VERSION = 9;
 
   // ------------------------------------------------- Imágenes de ejemplo ---
 
@@ -406,7 +406,7 @@
 
   // ------------------------------------------------------------ Generador ---
 
-  function generar(usuarios, localidades) {
+  function generar(usuarios, localidades, catalogos) {
     const U = App.util;
     const C = App.catalogos;
     const D = App.dominio;
@@ -819,7 +819,7 @@
 
     // --- auditoría ---
     const nombreEstado = (e) => (D.ESTADOS[e] ? D.ESTADOS[e].nombre : e);
-    const nombreDestino = (d) => (d.tipo === 'grupo' ? (C.gruposSoporte.find((g) => g.id === d.id) || {}).nombre : (usu(d.id) || {}).nombre) || '—';
+    const nombreDestino = (d) => (d.tipo === 'grupo' ? (catalogos.gruposSoporte.find((g) => g.id === d.id) || {}).nombre : (usu(d.id) || {}).nombre) || '—';
     const auditoria = [];
     const aud = (fecha, usuarioId, operacion, ticketId, detalle) => auditoria.push({ id: nuevoId('aud'), fecha, usuarioId, operacion, ticketId: ticketId || null, detalle: detalle || '' });
     for (const t of tickets) {
@@ -906,11 +906,6 @@
       version: VERSION,
       generadoEn: iso(ahora),
       secuencias: { ticket: 1001 + tickets.length },
-      sistemas: C.sistemas.map((x) => Object.assign({ activo: true }, x)),
-      subsistemas: C.subsistemas.map((x) => Object.assign({ activo: true }, x)),
-      tiposProblema: C.tiposProblema.map((x) => Object.assign({ activo: true }, x)),
-      criticidades: C.criticidades.map((x) => Object.assign({ activo: true }, x)),
-      gruposSoporte: C.gruposSoporte.map((x) => Object.assign({ activo: true, ejemplo: true }, x)),
       tickets: tickets.concat(borradores),
       soluciones,
       correos,

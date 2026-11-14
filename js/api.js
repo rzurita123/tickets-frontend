@@ -32,5 +32,6 @@
     ErrorApi,
     get: (ruta, token) => pedir('GET', ruta, undefined, token),
     post: (ruta, cuerpo, token) => pedir('POST', ruta, cuerpo, token),
+    put: (ruta, cuerpo, token) => pedir('PUT', ruta, cuerpo, token),
   };
 })(window.App = window.App || {});

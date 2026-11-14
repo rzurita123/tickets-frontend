@@ -24,9 +24,9 @@
       acciones: [
         { texto: 'Cancelar', clase: 'btn-neutro' },
         {
-          texto: op.textoGuardar || 'Guardar', clase: 'btn-primario', fn: () => {
+          texto: op.textoGuardar || 'Guardar', clase: 'btn-primario', fn: async () => {
             try {
-              op.guardar();
+              await op.guardar();
             } catch (e) {
               if (e.campos) { ui.mostrarErrores(cuerpo, e.campos, cuerpo); return false; }
               throw e;
@@ -68,21 +68,21 @@
         campos: [
           ui.campo({ nombre: 'nombre', id: 'c-nombre', etiqueta: 'Nombre', requerido: true, control: inNombre }),
         ],
-        guardar: () => {
-          S.guardarItemCatalogo(tipo, { nombre: inNombre.value, sistemaId }, u, item ? item.id : null);
+        guardar: async () => {
+          await S.guardarItemCatalogo(tipo, { nombre: inNombre.value, sistemaId }, u, item ? item.id : null);
           ui.toast(item ? 'Cambios guardados.' : U.capitalizar(SINGULAR[tipo]) + ' agregado.');
           ctx.refrescar();
         },
       });
     }
 
-    function alternar(tipo, item) {
+    async function alternar(tipo, item) {
       const activar = item.activo === false;
       try {
-        S.cambiarActivoItem(tipo, item.id, u, activar);
+        await S.cambiarActivoItem(tipo, item.id, u, activar);
         ctx.refrescar();
         ui.toast('«' + item.nombre + '» ' + (activar ? 'vuelve a estar disponible.' : 'ya no se puede elegir en tickets nuevos.'), {
-          accion: { texto: 'Deshacer', fn: () => { try { S.cambiarActivoItem(tipo, item.id, u, !activar); ctx.refrescar(); } catch (e) { ui.mostrarError(e); } } },
+          accion: { texto: 'Deshacer', fn: async () => { try { await S.cambiarActivoItem(tipo, item.id, u, !activar); ctx.refrescar(); } catch (e) { ui.mostrarError(e); } } },
         });
       } catch (e) { ui.mostrarError(e); }
     }
