@@ -38,8 +38,9 @@
     return document.body.classList.contains('con-modal');
   }
 
-  function arrancar() {
+  async function arrancar() {
     const inicio = App.store.iniciar();
+    await App.auth.restaurar();
 
     // Otra pestaña cambió los datos: se redibuja.
     let avisoPendiente = null;

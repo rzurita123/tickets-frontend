@@ -29,6 +29,23 @@
     return u;
   }
 
+  async function cargarUsuarios(tk) {
+    const [usuarios, localidades] = await Promise.all([App.api.get('/api/usuarios', tk), App.api.get('/api/localidades', tk)]);
+    App.store.cargar(usuarios, localidades);
+  }
+
+  // Recupera la sesión al recargar la página.
+  async function restaurar() {
+    const s = leerSesion();
+    if (!s) return;
+    try {
+      if (!s.token || new Date(s.expira) <= new Date()) throw new Error();
+      await cargarUsuarios(s.token);
+    } catch {
+      guardarSesion(null);
+    }
+  }
+
   function token() {
     const s = leerSesion();
     return s ? s.token : null;
@@ -46,8 +63,12 @@
     } catch (e) {
       return { ok: false, mensaje: e.status === 401 ? 'Usuario o contraseña incorrectos.' : e.message };
     }
-    const u = App.store.datos.usuarios.find((x) => x.usuario === r.usuario.usuario);
-    if (!u || u.activo === false) return { ok: false, mensaje: 'Ese usuario no está disponible.' };
+    try {
+      await cargarUsuarios(r.token);
+    } catch (e) {
+      return { ok: false, mensaje: e.message };
+    }
+    const u = App.store.usuario('u-' + r.usuario.usuario);
     guardarSesion({ usuarioId: u.id, token: r.token, expira: r.expira, inicio: new Date().toISOString() });
     App.store.registrarAuditoria(u.id, 'LOGIN', null, 'Usuario y contraseña');
     return { ok: true, usuario: u };
@@ -57,6 +78,7 @@
     const u = usuarioActual();
     if (u) App.store.registrarAuditoria(u.id, 'LOGOUT', null, '');
     guardarSesion(null);
+    App.store.vaciar();
   }
 
   /** Permisos por rol. */
@@ -80,5 +102,5 @@
     return !!usuario && (PERMISOS[permiso] || []).includes(usuario.rol);
   }
 
-  App.auth = { usuarioActual, token, ingresar, salir, puede, PERMISOS };
+  App.auth = { usuarioActual, token, restaurar, ingresar, salir, puede, PERMISOS };
 })(window.App = window.App || {});

@@ -10,6 +10,9 @@
   const MAX_CORREOS = 1500;
 
   let db = null;
+  // Llegan de la Api y no se guardan.
+  let listaUsuarios = [];
+  let listaLocalidades = [];
   let disponible = true; // localStorage utilizable
   const oyentes = new Set();
 
@@ -90,24 +93,38 @@
     return resultado;
   }
 
-  function iniciar() {
-    disponible = probarAlmacenamiento();
+  function cargarDatos() {
     db = leerGuardado();
     if (!db) {
-      db = App.semilla.generar();
+      db = App.semilla.generar(listaUsuarios, listaLocalidades);
       escribir();
     }
+  }
+
+  function iniciar() {
+    disponible = probarAlmacenamiento();
     window.addEventListener('storage', (e) => {
-      if (e.key !== CLAVE) return;
-      const nuevo = leerGuardado();
-      if (nuevo) db = nuevo;
-      else {
-        db = App.semilla.generar();
-        escribir();
-      }
+      if (e.key !== CLAVE || !listaUsuarios.length) return;
+      cargarDatos();
       emitir({ externo: true });
     });
     return { almacenamiento: disponible };
+  }
+
+  // Usuarios y localidades de la Api con ids locales.
+  function cargar(usuariosApi, localidadesApi) {
+    listaLocalidades = localidadesApi.map((l) => ({ id: 'loc-' + l.id, nombre: l.nombre, activa: l.activa !== false }));
+    listaUsuarios = usuariosApi.map((u) => ({
+      id: 'u-' + u.usuario, usuario: u.usuario, nombre: u.nombre, email: u.email, rol: u.rol,
+      cargo: u.cargo || '', localidadId: u.localidadId ? 'loc-' + u.localidadId : null, activo: u.activo !== false,
+    }));
+    cargarDatos();
+  }
+
+  function vaciar() {
+    listaUsuarios = [];
+    listaLocalidades = [];
+    db = null;
   }
 
   function alCambiar(fn) {
@@ -116,7 +133,7 @@
   }
 
   function restablecer(usuarioId) {
-    db = App.semilla.generar();
+    db = App.semilla.generar(listaUsuarios, listaLocalidades);
     if (usuarioId && usuario(usuarioId)) auditar(usuarioId, 'DATOS_RESTABLECIDOS', null, 'Se volvió a generar la base de ejemplo');
     escribir();
     emitir({ externo: false, restablecido: true });
@@ -126,8 +143,8 @@
 
   const porId = (lista, id) => (id ? lista.find((x) => x.id === id) || null : null);
 
-  const usuario = (id) => porId(db.usuarios, id);
-  const localidad = (id) => porId(db.localidades, id);
+  const usuario = (id) => porId(listaUsuarios, id);
+  const localidad = (id) => porId(listaLocalidades, id);
   const sistema = (id) => porId(db.sistemas, id);
   const subsistema = (id) => porId(db.subsistemas, id);
   const tipoProblema = (id) => porId(db.tiposProblema, id);
@@ -137,7 +154,7 @@
 
   /** Nombre de un elemento de catálogo, o `siNo` si no existe. */
   function nombre(coleccion, id, siNo) {
-    const x = porId(db[coleccion], id);
+    const x = porId(coleccion === 'localidades' ? listaLocalidades : db[coleccion], id);
     if (x) return x.nombre != null ? x.nombre : x.titulo;
     return siNo === undefined ? '—' : siNo;
   }
@@ -160,7 +177,7 @@
   const orden = (a, b) => a.nombre.localeCompare(b.nombre, 'es');
 
   function usuarios(filtro) {
-    let l = db.usuarios.slice();
+    let l = listaUsuarios.slice();
     if (filtro && filtro.rol) l = l.filter((u) => u.rol === filtro.rol);
     if (filtro && filtro.activo) l = l.filter((u) => u.activo !== false);
     return l.sort(orden);
@@ -170,7 +187,7 @@
     return usuarios({ activo: !!soloActivos }).filter(esOrmen);
   }
   function localidades(soloActivas) {
-    const l = soloActivas ? activos(db.localidades, 'activa') : db.localidades.slice();
+    const l = soloActivas ? activos(listaLocalidades, 'activa') : listaLocalidades.slice();
     return l.sort(orden);
   }
   function sistemas(soloActivos) {
@@ -979,90 +996,6 @@
     exigir(u && u.rol === 'ADMINISTRADOR', 'Sólo un administrador puede hacer este cambio.');
   }
 
-  function guardarUsuario(datos, admin, id) {
-    exigirAdmin(admin);
-    const existente = id ? usuario(id) : null;
-    exigir(!id || existente, 'El usuario no existe.');
-    const e = {};
-    const nombreU = limpio(datos.nombre);
-    const login = limpio(datos.usuario).toLowerCase();
-    const email = limpio(datos.email).toLowerCase();
-    if (!nombreU) e.nombre = 'Escribí el nombre.';
-    if (!login) e.usuario = 'Escribí el nombre de usuario.';
-    else if (!/^[a-z0-9._-]{3,30}$/.test(login)) e.usuario = 'Usá entre 3 y 30 letras sin tildes, números, punto o guion.';
-    else if (db.usuarios.some((x) => x.usuario === login && x.id !== id)) e.usuario = 'Ya existe un usuario con ese nombre.';
-    if (!email) e.email = 'Escribí el correo.';
-    else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) e.email = 'El correo no tiene un formato válido.';
-    if (!D.ROLES[datos.rol]) e.rol = 'Elegí el rol.';
-    if (datos.rol === 'CLIENTE') {
-      const l = localidad(datos.localidadId);
-      if (!l) e.localidadId = 'Un cliente tiene que pertenecer a una localidad.';
-      else if (l.activa === false && (!existente || existente.localidadId !== l.id)) e.localidadId = 'Esa localidad está inactiva.';
-    }
-    if (existente && existente.id === admin.id && datos.rol !== 'ADMINISTRADOR') e.rol = 'No podés quitarte el rol de administrador.';
-    if (Object.keys(e).length) throw errorDeCampos(e);
-    return mutar(() => {
-      const campos = {
-        nombre: nombreU, usuario: login, email, rol: datos.rol,
-        localidadId: datos.rol === 'CLIENTE' ? datos.localidadId : null,
-        cargo: limpio(datos.cargo),
-      };
-      if (existente) {
-        Object.assign(existente, campos);
-        auditar(admin.id, 'USUARIO_MODIF', null, existente.nombre + ' (' + D.ROLES[existente.rol].nombre + ')');
-        return existente;
-      }
-      const u = Object.assign({ id: U.uid('u'), activo: true, creadoEn: U.isoAhora() }, campos);
-      db.usuarios.push(u);
-      auditar(admin.id, 'USUARIO_ALTA', null, u.nombre + ' (' + D.ROLES[u.rol].nombre + ')');
-      return u;
-    });
-  }
-
-  function cambiarActivoUsuario(id, admin, activo) {
-    exigirAdmin(admin);
-    const u = usuario(id);
-    exigir(u, 'El usuario no existe.');
-    exigir(u.id !== admin.id, 'No podés desactivar tu propio usuario.');
-    return mutar(() => {
-      u.activo = !!activo;
-      auditar(admin.id, 'USUARIO_MODIF', null, u.nombre + (activo ? ' · activado' : ' · desactivado'));
-      return u;
-    });
-  }
-
-  function guardarLocalidad(datos, admin, id) {
-    exigirAdmin(admin);
-    const existente = id ? localidad(id) : null;
-    exigir(!id || existente, 'La localidad no existe.');
-    const n = limpio(datos.nombre);
-    if (!n) throw errorDeCampos({ nombre: 'Escribí el nombre de la localidad.' });
-    if (db.localidades.some((l) => U.normalizar(l.nombre) === U.normalizar(n) && l.id !== id)) throw errorDeCampos({ nombre: 'Ya existe una localidad con ese nombre.' });
-    return mutar(() => {
-      if (existente) {
-        const antes = existente.nombre;
-        existente.nombre = n;
-        auditar(admin.id, 'LOCALIDAD_MODIF', null, antes === n ? n : antes + ' → ' + n);
-        return existente;
-      }
-      const l = { id: U.uid('loc'), nombre: n, activa: true };
-      db.localidades.push(l);
-      auditar(admin.id, 'LOCALIDAD_ALTA', null, n);
-      return l;
-    });
-  }
-
-  function cambiarActivaLocalidad(id, admin, activa) {
-    exigirAdmin(admin);
-    const l = localidad(id);
-    exigir(l, 'La localidad no existe.');
-    return mutar(() => {
-      l.activa = !!activa;
-      auditar(admin.id, 'LOCALIDAD_MODIF', null, l.nombre + (activa ? ' · activada' : ' · desactivada'));
-      return l;
-    });
-  }
-
   const NOMBRES_CATALOGO = {
     sistemas: 'Sistemas',
     subsistemas: 'Subsistemas',
@@ -1138,7 +1071,7 @@
 
   App.store = {
     ErrorDemo,
-    iniciar, alCambiar, restablecer, registrarAuditoria,
+    iniciar, cargar, vaciar, alCambiar, restablecer, registrarAuditoria,
     get datos() { return db; },
     get almacenamientoDisponible() { return disponible; },
     // consultas
@@ -1157,7 +1090,6 @@
     // soluciones
     proponerSolucion, guardarSolucion, aprobarSolucion, rechazarSolucion,
     // administración
-    guardarUsuario, cambiarActivoUsuario, guardarLocalidad, cambiarActivaLocalidad,
     guardarItemCatalogo, cambiarActivoItem, guardarParametros,
     LIMITES_PARAMETROS, NOMBRES_CATALOGO,
   };
