@@ -110,8 +110,6 @@
   };
 
   /** Usuarios destacados en la pantalla de ingreso (uno por rol). */
-  // Todos los usuarios de prueba, en el orden en que aparecen en el ingreso.
-  const accesosRapidos = ['u-vpereira', 'u-nacosta', 'u-scabrera', 'u-ralvarez', 'u-mtechera', 'u-lgomez'];
 
-  App.catalogos = { localidades, sistemas, subsistemas, tiposProblema, criticidades, gruposSoporte, usuarios, parametros, accesosRapidos };
+  App.catalogos = { localidades, sistemas, subsistemas, tiposProblema, criticidades, gruposSoporte, usuarios, parametros };
 })(window.App = window.App || {});
