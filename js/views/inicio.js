@@ -156,9 +156,9 @@
     const favTickets = favoritos.filter((f) => f.tipo === 'ticket').map((f) => f.item);
     const favSoluciones = favoritos.filter((f) => f.tipo === 'solucion').map((f) => f.item);
 
-    function tomar(t) {
+    async function tomar(t) {
       try {
-        S.asignar(t.id, u, u.id);
+        await S.asignar(t.id, u, u.id);
         ui.toast('Tomaste el ticket #' + t.numero + '.', { accion: { texto: 'Abrir', fn: () => App.router.ir('/tickets/' + t.numero) } });
         ctx.refrescar();
       } catch (e) { ui.mostrarError(e); }

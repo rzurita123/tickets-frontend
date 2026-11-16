@@ -14,6 +14,7 @@
   // Llegan de la Api y no se guardan.
   let listaUsuarios = [];
   let listaLocalidades = [];
+  let listaTickets = [];
   let cat = sinCatalogos();
 
   function sinCatalogos() {
@@ -65,7 +66,7 @@
       const txt = localStorage.getItem(CLAVE);
       if (!txt) return null;
       const d = JSON.parse(txt);
-      if (!d || d.version !== App.semilla.VERSION || !Array.isArray(d.tickets)) return null;
+      if (!d || d.version !== App.semilla.VERSION || !Array.isArray(d.soluciones)) return null;
       return d;
     } catch {
       return null;
@@ -109,7 +110,7 @@
   function cargarDatos() {
     db = leerGuardado();
     if (!db) {
-      db = App.semilla.generar(listaUsuarios, listaLocalidades, cat);
+      db = App.semilla.generar();
       escribir();
     }
   }
@@ -125,7 +126,7 @@
   }
 
   // Datos de la Api con ids locales.
-  function cargar(usuariosApi, localidadesApi, catalogosApi) {
+  function cargar(usuariosApi, localidadesApi, catalogosApi, ticketsApi) {
     cat = sinCatalogos();
     for (const tipo of Object.keys(cat)) cat[tipo] = catalogosApi[tipo].map((x) => itemDesdeApi(tipo, x));
     listaLocalidades = localidadesApi.map((l) => ({ id: 'loc-' + l.id, nombre: l.nombre, activa: l.activa !== false }));
@@ -134,11 +135,13 @@
       cargo: u.cargo || '', localidadId: u.localidadId ? 'loc-' + u.localidadId : null, activo: u.activo !== false,
     }));
     cargarDatos();
+    listaTickets = ticketsApi.map(ticketDesdeApi);
   }
 
   function vaciar() {
     listaUsuarios = [];
     listaLocalidades = [];
+    listaTickets = [];
     cat = sinCatalogos();
     db = null;
   }
@@ -149,7 +152,7 @@
   }
 
   function restablecer(usuarioId) {
-    db = App.semilla.generar(listaUsuarios, listaLocalidades, cat);
+    db = App.semilla.generar();
     if (usuarioId && usuario(usuarioId)) auditar(usuarioId, 'DATOS_RESTABLECIDOS', null, 'Se volvió a generar la base de ejemplo');
     escribir();
     emitir({ externo: false, restablecido: true });
@@ -166,7 +169,7 @@
   const tipoProblema = (id) => porId(cat.tiposProblema, id);
   const criticidad = (id) => porId(cat.criticidades, id);
   const solucion = (id) => porId(db.soluciones, id);
-  const ticket = (id) => porId(db.tickets, id);
+  const ticket = (id) => porId(listaTickets, id);
 
   /** Nombre de un elemento de catálogo, o `siNo` si no existe. */
   function nombre(coleccion, id, siNo) {
@@ -230,11 +233,11 @@
   }
 
   function ticketsVisibles(u) {
-    return db.tickets.filter((t) => t.estado !== 'BORRADOR' && puedeVerTicket(t, u));
+    return listaTickets.filter((t) => t.estado !== 'BORRADOR' && puedeVerTicket(t, u));
   }
 
   function borradoresDe(u) {
-    return db.tickets
+    return listaTickets
       .filter((t) => t.estado === 'BORRADOR' && t.creadoPorId === u.id)
       .sort((a, b) => b.actualizadoEn.localeCompare(a.actualizadoEn));
   }
@@ -242,7 +245,7 @@
   function ticketPorNumero(numero) {
     const n = Number(numero);
     if (!Number.isInteger(n)) return null;
-    return db.tickets.find((t) => t.numero === n) || null;
+    return listaTickets.find((t) => t.numero === n) || null;
   }
 
   /** Busca un ticket por número respetando la visibilidad. */
@@ -406,10 +409,119 @@
     return s;
   }
 
+  // ------------------------------------------------- Tickets en la Api ---
+
+  const TIPOS_EVENTO = {
+    Creacion: 'creado', Comentario: 'comentario', Asignacion: 'asignado', Liberacion: 'liberado', Elevacion: 'elevado',
+    Bloqueo: 'bloqueo', Desbloqueo: 'desbloqueo', ModificacionDatos: 'datos', Cierre: 'cierre', Reapertura: 'reapertura',
+    Privacidad: 'privacidad',
+  };
+
+  const idUsuario = (nombre) => (nombre ? 'u-' + nombre : null);
+  const nombreUsuario = (id) => (id ? String(id).slice(2) : null);
+  const idApi = (id) => Number(String(id).slice(2));
+  const fecha = (v) => (v ? new Date(v).toISOString() : null);
+
+  function imagenDesdeApi(a) {
+    return { id: a.id, nombre: a.nombre, dataUrl: a.dataUrl, autorId: idUsuario(a.autor), fecha: fecha(a.fecha) };
+  }
+
+  function destinoDesdeApi(d) {
+    return d ? { tipo: d.tipo, id: d.tipo === 'usuario' ? idUsuario(d.id) : d.id } : null;
+  }
+
+  function eventoDesdeApi(a) {
+    const tipo = TIPOS_EVENTO[a.tipo] || a.tipo;
+    const ev = { id: 'a-' + a.id, tipo, fecha: fecha(a.fecha), autorId: idUsuario(a.autor), texto: a.texto || null };
+    if (a.de) ev.de = a.de;
+    if (a.a) ev.a = a.a;
+    if (a.operador) ev.operadorId = idUsuario(a.operador);
+    if (a.destino) ev.destino = destinoDesdeApi(a.destino);
+    if (tipo === 'comentario' || tipo === 'bloqueo') ev.visibilidad = a.privada ? 'PRIVADO' : 'PUBLICO';
+    if (tipo === 'comentario') ev.adjuntos = (a.adjuntos || []).map(imagenDesdeApi);
+    if (tipo === 'creado') Object.assign(ev, { estado: a.a || 'ABIERTO', desdeBorrador: a.detalle === 'borrador' });
+    if (tipo === 'cierre') ev.registroDirecto = a.detalle === 'directo';
+    if (tipo === 'privacidad') ev.privado = !!a.privada;
+    if (tipo === 'datos') {
+      try { ev.cambios = JSON.parse(a.detalle) || []; } catch { ev.cambios = []; }
+    }
+    return ev;
+  }
+
+  function ticketDesdeApi(x) {
+    const vacio = x.estado === 'BORRADOR' ? '' : null;
+    const t = {
+      id: 't-' + x.id, numero: x.numero, estado: x.estado, titulo: x.titulo, descripcion: x.descripcion,
+      privado: !!x.privado, registroDirecto: !!x.registroDirecto,
+      localidadId: x.localidadId ? 'loc-' + x.localidadId : vacio,
+      sistemaId: x.sistema || vacio, subsistemaId: x.subsistema || vacio, criticidadId: x.criticidad || vacio,
+      tipoProblemaId: x.tipoProblema || 'tp-nodef',
+      creadoPorId: idUsuario(x.creadoPor), operadorId: idUsuario(x.operador), elevadoA: destinoDesdeApi(x.elevadoA),
+      creadoEn: fecha(x.creadoEn), actualizadoEn: fecha(x.actualizadoEn), cerradoEn: fecha(x.cerradoEn),
+      adjuntos: (x.adjuntos || []).map(imagenDesdeApi),
+      solucion: x.solucion ? {
+        texto: x.solucion.texto, enDescripcion: !!x.solucion.enDescripcion, solucionCatalogoId: x.solucion.solucionCatalogoId || null,
+        autorId: idUsuario(x.solucion.autor), fecha: fecha(x.solucion.fecha), adjuntos: (x.solucion.adjuntos || []).map(imagenDesdeApi),
+      } : null,
+      actividad: (x.actividad || []).map(eventoDesdeApi),
+    };
+    // Las propuestas de solución todavía son locales.
+    for (const s of db ? db.soluciones : []) {
+      if (s.ticketOrigenId === t.id) t.actividad.push({ id: 'a-' + s.id, tipo: 'propuesta', fecha: s.creadaEn, autorId: s.creadaPorId, solucionId: s.id });
+    }
+    t.actividad.sort((a, b) => a.fecha.localeCompare(b.fecha));
+    return t;
+  }
+
+  function guardarLocal(x) {
+    const t = ticketDesdeApi(x);
+    const i = listaTickets.findIndex((y) => y.id === t.id);
+    if (i >= 0) listaTickets[i] = t;
+    else listaTickets.push(t);
+    return t;
+  }
+
+  async function pedirTicket(metodo, ruta, cuerpo) {
+    try {
+      const tk = App.auth.token();
+      return await (metodo === 'del' ? App.api.del('/api/tickets' + ruta, tk) : App.api[metodo]('/api/tickets' + ruta, cuerpo || {}, tk));
+    } catch (e) {
+      throw new ErrorDemo(e.message);
+    }
+  }
+
+  /** Guarda lo local (auditoría, correos, soluciones) y avisa a la pantalla. */
+  function asentar() {
+    escribir();
+    emitir({ externo: false });
+  }
+
+  /** Vuelve a pedir los tickets; devuelve si hubo cambios. */
+  async function actualizarTickets() {
+    const lista = await App.api.get('/api/tickets', App.auth.token());
+    const firma = (l) => l.map((t) => t.id + ':' + t.actualizadoEn + ':' + t.estado).sort().join('|');
+    const nuevos = lista.map(ticketDesdeApi);
+    if (firma(nuevos) === firma(listaTickets)) return false;
+    listaTickets = nuevos;
+    emitir({ externo: true });
+    return true;
+  }
+
+  const imagenes = (lista) => (lista || []).map((a) => ({ id: a.id || U.uid('img'), nombre: a.nombre || 'imagen', dataUrl: a.dataUrl }));
+
+  function cuerpoTicket(datos) {
+    return {
+      titulo: limpio(datos.titulo), descripcion: limpio(datos.descripcion),
+      localidadId: datos.localidadId ? Number(String(datos.localidadId).slice(4)) : null,
+      sistema: datos.sistemaId || null, subsistema: datos.subsistemaId || null, criticidad: datos.criticidadId || null,
+      tipoProblema: datos.tipoProblemaId || null, adjuntos: imagenes(datos.adjuntos),
+    };
+  }
+
   // ---------------------------------------------------- Alta de tickets ---
 
   /** Crea un ticket, abierto o ya cerrado. */
-  function crearTicket(datos, u, opciones) {
+  async function crearTicket(datos, u, opciones) {
     const op = opciones || {};
     exigir(u && ['OPERADOR', 'CLIENTE', 'ADMINISTRADOR'].includes(u.rol), 'Tu rol no puede crear tickets.');
     exigir(!op.proponer || u.rol !== 'CLIENTE', 'Sólo ORMEN puede proponer soluciones reutilizables.');
@@ -424,90 +536,48 @@
     if (Object.keys(errores).length) throw errorDeCampos(errores);
     if (op.borradorId) exigir(borradorParaUsuario(op.borradorId, u), 'El borrador ya no existe.');
 
-    return mutar(() => {
-      const ahora = U.isoAhora();
-      const numero = db.secuencias.ticket++;
-      const esOp = esOrmen(u);
-      const quedaEnProceso = esOp && !!op.registroDirecto;
-      const t = Object.assign({ id: 't-' + numero, numero, estado: quedaEnProceso ? 'EN_PROCESO' : 'ABIERTO' }, datosTicket(datos, u), {
-        creadoPorId: u.id,
-        operadorId: quedaEnProceso ? u.id : null,
-        elevadoA: null,
-        creadoEn: ahora,
-        actualizadoEn: ahora,
-        cerradoEn: null,
-        adjuntos: copiarAdjuntos(datos.adjuntos, u.id, ahora),
-        solucion: null,
-        registroDirecto: !!op.registroDirecto,
-        privado: !!op.privado,
-        actividad: [{ id: U.uid('a'), tipo: 'creado', fecha: ahora, autorId: u.id, estado: quedaEnProceso ? 'EN_PROCESO' : 'ABIERTO', operadorId: quedaEnProceso ? u.id : null, desdeBorrador: !!op.borradorId }],
-      });
-      if (op.borradorId) {
-        db.tickets = db.tickets.filter((x) => x.id !== op.borradorId);
-      }
-      db.tickets.push(t);
-      if (op.registroDirecto) {
-        // En un ticket ya resuelto, la resolución es la descripción.
-        const enDescripcion = !limpio(op.solucionTexto);
-        const adj = enDescripcion ? [] : copiarAdjuntos(op.solucionAdjuntos, u.id, ahora);
-        t.estado = 'CERRADO';
-        t.cerradoEn = ahora;
-        t.solucion = { texto: enDescripcion ? t.descripcion : limpio(op.solucionTexto), adjuntos: adj, enDescripcion, solucionCatalogoId: op.solucionCatalogoId || null, autorId: u.id, fecha: ahora };
-        t.actividad.push({ id: U.uid('a'), tipo: 'cierre', fecha: ahora, autorId: u.id, de: null, registroDirecto: true });
-        auditar(u.id, 'TICKET_CERRADO_DIRECTO', t.id, '#' + numero + ' · ' + t.titulo);
-        if (op.proponer) crearPropuesta(t, u, op.proponer, t.solucion.texto, adjuntosSolucion(t), ahora);
-      } else {
-        auditar(u.id, 'TICKET_CREADO', t.id, '#' + numero + ' · ' + t.titulo + (op.borradorId ? ' (desde un borrador)' : ''));
-      }
-      return t;
-    });
+    const t = guardarLocal(await pedirTicket('post', '', Object.assign(cuerpoTicket(datos), {
+      borradorId: op.borradorId ? idApi(op.borradorId) : null,
+      registroDirecto: !!op.registroDirecto,
+      privado: !!op.privado,
+      solucionTexto: limpio(op.solucionTexto),
+      solucionCatalogoId: op.solucionCatalogoId || null,
+      solucionAdjuntos: imagenes(op.solucionAdjuntos),
+    })));
+    if (op.registroDirecto) {
+      auditar(u.id, 'TICKET_CERRADO_DIRECTO', t.id, '#' + t.numero + ' · ' + t.titulo);
+      if (op.proponer) crearPropuesta(t, u, op.proponer, t.solucion.texto, adjuntosSolucion(t), U.isoAhora());
+    } else {
+      auditar(u.id, 'TICKET_CREADO', t.id, '#' + t.numero + ' · ' + t.titulo + (op.borradorId ? ' (desde un borrador)' : ''));
+    }
+    asentar();
+    return t;
   }
 
   // ------------------------------------------------------- Borradores ---
 
-  function guardarBorrador(datos, u, id) {
+  async function guardarBorrador(datos, u, id) {
     exigir(u && ['OPERADOR', 'CLIENTE', 'ADMINISTRADOR'].includes(u.rol), 'Tu rol no puede guardar borradores.');
     const tieneAlgo = ['titulo', 'descripcion', 'localidadId', 'sistemaId'].some((k) => limpio(datos[k])) || (datos.adjuntos && datos.adjuntos.length);
     if (!tieneAlgo) throw errorDeCampos({ descripcion: 'Para guardar un borrador escribí algo (por ejemplo, una nota en la descripción).' });
-    return mutar(() => {
-      const ahora = U.isoAhora();
-      let b = id ? borradorParaUsuario(id, u) : null;
-      exigir(!id || b, 'El borrador ya no existe.');
-      const campos = {
-        titulo: limpio(datos.titulo),
-        descripcion: limpio(datos.descripcion),
-        localidadId: (u.rol === 'CLIENTE' ? u.localidadId : datos.localidadId) || '',
-        sistemaId: datos.sistemaId || '',
-        subsistemaId: datos.subsistemaId || '',
-        criticidadId: datos.criticidadId || '',
-        tipoProblemaId: datos.tipoProblemaId || 'tp-nodef',
-      };
-      if (!b) {
-        b = Object.assign({
-          id: U.uid('b'), numero: null, estado: 'BORRADOR', creadoPorId: u.id, operadorId: u.id,
-          creadoEn: ahora, cerradoEn: null, solucion: null, registroDirecto: false, elevadoA: null, actividad: [], adjuntos: [],
-        }, campos);
-        db.tickets.push(b);
-      } else {
-        Object.assign(b, campos);
-      }
-      // Las imágenes ya guardadas conservan su id; las nuevas se agregan.
-      const previas = new Map(b.adjuntos.map((a) => [a.id, a]));
-      b.adjuntos = (datos.adjuntos || []).map((a) => previas.get(a.id) || { id: a.id || U.uid('img'), nombre: a.nombre || 'imagen', dataUrl: a.dataUrl, autorId: u.id, fecha: ahora });
-      b.actualizadoEn = ahora;
-      auditar(u.id, 'BORRADOR_GUARDADO', null, b.titulo || U.truncar(b.descripcion, 60) || 'Sin título');
-      return b;
-    });
+    exigir(!id || borradorParaUsuario(id, u), 'El borrador ya no existe.');
+    const cuerpo = cuerpoTicket(Object.assign({}, datos, { localidadId: u.rol === 'CLIENTE' ? u.localidadId : datos.localidadId }));
+    const b = guardarLocal(id
+      ? await pedirTicket('put', '/borradores/' + idApi(id), cuerpo)
+      : await pedirTicket('post', '/borradores', cuerpo));
+    auditar(u.id, 'BORRADOR_GUARDADO', null, b.titulo || U.truncar(b.descripcion, 60) || 'Sin título');
+    asentar();
+    return b;
   }
 
-  function descartarBorrador(id, u) {
-    return mutar(() => {
-      const b = borradorParaUsuario(id, u);
-      exigir(b, 'El borrador ya no existe.');
-      db.tickets = db.tickets.filter((x) => x.id !== id);
-      auditar(u.id, 'BORRADOR_DESCARTADO', null, b.titulo || U.truncar(b.descripcion, 60) || 'Sin título');
-      return true;
-    });
+  async function descartarBorrador(id, u) {
+    const b = borradorParaUsuario(id, u);
+    exigir(b, 'El borrador ya no existe.');
+    await pedirTicket('del', '/borradores/' + idApi(id));
+    listaTickets = listaTickets.filter((x) => x.id !== id);
+    auditar(u.id, 'BORRADOR_DESCARTADO', null, b.titulo || U.truncar(b.descripcion, 60) || 'Sin título');
+    asentar();
+    return true;
   }
 
   // ---------------------------------------------------- Tratamiento ---
@@ -522,60 +592,54 @@
   function evento(t, datos) {
     const ev = Object.assign({ id: U.uid('a'), fecha: U.isoAhora() }, datos);
     t.actividad.push(ev);
-    t.actualizadoEn = ev.fecha;
     return ev;
   }
 
+  /** Envía la acción a la Api y deja el ticket actualizado. */
+  async function accionTicket(t, ruta, cuerpo, metodo) {
+    return guardarLocal(await pedirTicket(metodo || 'post', '/' + idApi(t.id) + '/' + ruta, cuerpo));
+  }
+
   /** Comentario público o privado; también en tickets cerrados. */
-  function comentar(ticketId, u, datos) {
-    const t = ticket(ticketId);
-    exigir(t && t.estado !== 'BORRADOR' && puedeVerTicket(t, u), 'El ticket no existe o no tenés acceso.');
+  async function comentar(ticketId, u, datos) {
+    const previo = ticket(ticketId);
+    exigir(previo && previo.estado !== 'BORRADOR' && puedeVerTicket(previo, u), 'El ticket no existe o no tenés acceso.');
     const campos = {};
     const texto = limpio(datos.texto);
     if (!texto) campos.texto = 'Escribí el comentario.';
     const visibilidad = u.rol === 'CLIENTE' ? 'PUBLICO' : datos.visibilidad;
     if (visibilidad !== 'PUBLICO' && visibilidad !== 'PRIVADO') campos.visibilidad = 'Elegí si el comentario es público o privado.';
     if (Object.keys(campos).length) throw errorDeCampos(campos);
-    return mutar(() => {
-      const ahora = U.isoAhora();
-      const ev = evento(t, { tipo: 'comentario', autorId: u.id, texto, visibilidad, adjuntos: copiarAdjuntos(datos.adjuntos, u.id, ahora) });
-      auditar(u.id, visibilidad === 'PRIVADO' ? 'COMENTARIO_PRIVADO' : 'COMENTARIO_PUBLICO', t.id, U.truncar(texto, 90));
-      if (esOrmen(u) && visibilidad === 'PUBLICO') enviarCorreo(t, u, 'comentario', 'Mensaje de Mesa de ayuda:\n"' + texto + '"');
-      return ev;
-    });
+    const t = await accionTicket(previo, 'comentarios', { texto, privado: visibilidad === 'PRIVADO', adjuntos: imagenes(datos.adjuntos) });
+    auditar(u.id, visibilidad === 'PRIVADO' ? 'COMENTARIO_PRIVADO' : 'COMENTARIO_PUBLICO', t.id, U.truncar(texto, 90));
+    if (esOrmen(u) && visibilidad === 'PUBLICO') enviarCorreo(t, u, 'comentario', 'Mensaje de Mesa de ayuda:\n"' + texto + '"');
+    asentar();
+    return t.actividad.filter((ev) => ev.tipo === 'comentario').pop();
   }
 
   /** Tomar o asignar: un ticket Abierto pasa a En proceso. */
-  function asignar(ticketId, u, operadorId) {
-    const t = ticketActivoParaOperador(ticketId, u);
-    exigir(t.estado !== 'CERRADO', 'El ticket está cerrado.');
+  async function asignar(ticketId, u, operadorId) {
+    const previo = ticketActivoParaOperador(ticketId, u);
+    exigir(previo.estado !== 'CERRADO', 'El ticket está cerrado.');
     const op = usuario(operadorId);
     exigir(esOrmen(op) && op.activo !== false, 'Elegí una persona activa de ORMEN.');
-    exigir(t.operadorId !== operadorId, 'El ticket ya lo atiende ' + op.nombre + '.');
-    return mutar(() => {
-      const anteriorId = t.operadorId;
-      const de = t.estado;
-      t.operadorId = operadorId;
-      if (de === 'ABIERTO') t.estado = 'EN_PROCESO';
-      evento(t, { tipo: 'asignado', autorId: u.id, operadorId, anteriorId, de, a: t.estado });
-      auditar(u.id, 'ASIGNACION', t.id, 'Atiende: ' + op.nombre + (de !== t.estado ? ' · ' + nombreEstado(de) + ' → ' + nombreEstado(t.estado) : ''));
-      if (de !== t.estado) enviarCorreo(t, u, 'en-proceso', null);
-      return t;
-    });
+    exigir(previo.operadorId !== operadorId, 'El ticket ya lo atiende ' + op.nombre + '.');
+    const de = previo.estado;
+    const t = await accionTicket(previo, 'asignar', { operador: nombreUsuario(operadorId) });
+    auditar(u.id, 'ASIGNACION', t.id, 'Atiende: ' + op.nombre + (de !== t.estado ? ' · ' + nombreEstado(de) + ' → ' + nombreEstado(t.estado) : ''));
+    if (de !== t.estado) enviarCorreo(t, u, 'en-proceso', null);
+    asentar();
+    return t;
   }
 
   /** Devuelve el ticket a la cola: nadie lo atiende y vuelve a Abierto. */
-  function liberar(ticketId, u) {
-    const t = ticketActivoParaOperador(ticketId, u);
-    exigir(t.estado === 'EN_PROCESO', 'Sólo se puede devolver a la cola un ticket En proceso.');
-    return mutar(() => {
-      const anteriorId = t.operadorId;
-      t.operadorId = null;
-      t.estado = 'ABIERTO';
-      evento(t, { tipo: 'liberado', autorId: u.id, anteriorId, de: 'EN_PROCESO', a: 'ABIERTO' });
-      auditar(u.id, 'LIBERACION', t.id, 'En proceso → Abierto · sin asignar');
-      return t;
-    });
+  async function liberar(ticketId, u) {
+    const previo = ticketActivoParaOperador(ticketId, u);
+    exigir(previo.estado === 'EN_PROCESO', 'Sólo se puede devolver a la cola un ticket En proceso.');
+    const t = await accionTicket(previo, 'liberar');
+    auditar(u.id, 'LIBERACION', t.id, 'En proceso → Abierto · sin asignar');
+    asentar();
+    return t;
   }
 
   /** Grupos de soporte y personas de Mesa de ayuda a las que se puede elevar. */
@@ -600,11 +664,11 @@
   const mismoDestino = (a, b) => !!a && !!b && a.tipo === b.tipo && a.id === b.id;
 
   /** Eleva el ticket a un grupo o a otra persona. */
-  function elevar(ticketId, u, datos) {
-    const t = ticketActivoParaOperador(ticketId, u);
-    exigir(t.estado !== 'ABIERTO', 'Primero tomá el ticket: sólo se eleva un ticket En proceso.');
-    exigir(t.estado !== 'BLOQUEADO', 'El ticket está bloqueado: desbloquealo antes de elevarlo.');
-    exigir(t.estado === 'EN_PROCESO', 'Sólo se eleva un ticket En proceso.');
+  async function elevar(ticketId, u, datos) {
+    const previo = ticketActivoParaOperador(ticketId, u);
+    exigir(previo.estado !== 'ABIERTO', 'Primero tomá el ticket: sólo se eleva un ticket En proceso.');
+    exigir(previo.estado !== 'BLOQUEADO', 'El ticket está bloqueado: desbloquealo antes de elevarlo.');
+    exigir(previo.estado === 'EN_PROCESO', 'Sólo se eleva un ticket En proceso.');
     const destino = destinoDesdeClave(datos && datos.destino);
     const e = {};
     if (!destino) e.destino = 'Elegí a quién se eleva.';
@@ -612,53 +676,45 @@
     else if (destino.tipo === 'usuario') {
       const p = usuario(destino.id);
       if (!esOrmen(p) || p.activo === false) e.destino = 'Elegí una persona activa de ORMEN.';
-      else if (p.id === t.operadorId) e.destino = 'Ya lo atiende ' + p.nombre + '.';
+      else if (p.id === previo.operadorId) e.destino = 'Ya lo atiende ' + p.nombre + '.';
     }
-    if (!e.destino && mismoDestino(destino, t.elevadoA)) e.destino = 'El ticket ya está elevado a ' + nombreDestino(destino) + '.';
+    if (!e.destino && mismoDestino(destino, previo.elevadoA)) e.destino = 'El ticket ya está elevado a ' + nombreDestino(destino) + '.';
     const motivo = limpio(datos && datos.motivo);
     if (!motivo) e.motivo = 'Escribí por qué se eleva.';
     if (Object.keys(e).length) throw errorDeCampos(e);
-    return mutar(() => {
-      const anterior = t.elevadoA || null;
-      t.elevadoA = destino;
-      if (destino.tipo === 'usuario') t.operadorId = destino.id;
-      evento(t, { tipo: 'elevado', autorId: u.id, destino, anterior, texto: motivo });
-      auditar(u.id, 'ELEVACION', t.id, 'Elevado a ' + nombreDestino(destino) + ' · ' + U.truncar(motivo, 70));
-      enviarCorreo(t, u, 'elevado', 'Lo derivamos a ' + nombreDestino(destino) + ' para revisarlo. Te avisamos por acá apenas tengamos novedades.');
-      return t;
-    });
+    const t = await accionTicket(previo, 'elevar', destino.tipo === 'grupo' ? { grupo: destino.id, motivo } : { usuario: nombreUsuario(destino.id), motivo });
+    auditar(u.id, 'ELEVACION', t.id, 'Elevado a ' + nombreDestino(destino) + ' · ' + U.truncar(motivo, 70));
+    enviarCorreo(t, u, 'elevado', 'Lo derivamos a ' + nombreDestino(destino) + ' para revisarlo. Te avisamos por acá apenas tengamos novedades.');
+    asentar();
+    return t;
   }
 
   /** Bloqueado: detenido por un factor externo. El motivo es obligatorio. */
-  function bloquear(ticketId, u, datos) {
-    const t = ticketActivoParaOperador(ticketId, u);
-    exigir(t.estado !== 'ABIERTO', 'Primero tomá el ticket: sólo se bloquea un ticket En proceso.');
-    exigir(t.estado === 'EN_PROCESO', 'El ticket ya está bloqueado.');
+  async function bloquear(ticketId, u, datos) {
+    const previo = ticketActivoParaOperador(ticketId, u);
+    exigir(previo.estado !== 'ABIERTO', 'Primero tomá el ticket: sólo se bloquea un ticket En proceso.');
+    exigir(previo.estado === 'EN_PROCESO', 'El ticket ya está bloqueado.');
     const texto = limpio(datos && datos.texto);
     const e = {};
     if (!texto) e.texto = 'Escribí qué factor externo lo detiene.';
     if (datos.visibilidad !== 'PUBLICO' && datos.visibilidad !== 'PRIVADO') e.visibilidad = 'Elegí si el motivo es público o privado.';
     if (Object.keys(e).length) throw errorDeCampos(e);
-    return mutar(() => {
-      t.estado = 'BLOQUEADO';
-      evento(t, { tipo: 'bloqueo', autorId: u.id, de: 'EN_PROCESO', a: 'BLOQUEADO', texto, visibilidad: datos.visibilidad });
-      auditar(u.id, 'BLOQUEO', t.id, 'En proceso → Bloqueado · ' + U.truncar(texto, 70));
-      enviarCorreo(t, u, 'bloqueado', datos.visibilidad === 'PUBLICO' ? 'Mensaje de Mesa de ayuda:\n"' + texto + '"' : null);
-      return t;
-    });
+    const t = await accionTicket(previo, 'bloquear', { texto, privado: datos.visibilidad === 'PRIVADO' });
+    auditar(u.id, 'BLOQUEO', t.id, 'En proceso → Bloqueado · ' + U.truncar(texto, 70));
+    enviarCorreo(t, u, 'bloqueado', datos.visibilidad === 'PUBLICO' ? 'Mensaje de Mesa de ayuda:\n"' + texto + '"' : null);
+    asentar();
+    return t;
   }
 
-  function desbloquear(ticketId, u, datos) {
-    const t = ticketActivoParaOperador(ticketId, u);
-    exigir(t.estado === 'BLOQUEADO', 'El ticket no está bloqueado.');
+  async function desbloquear(ticketId, u, datos) {
+    const previo = ticketActivoParaOperador(ticketId, u);
+    exigir(previo.estado === 'BLOQUEADO', 'El ticket no está bloqueado.');
     const texto = limpio(datos && datos.texto);
-    return mutar(() => {
-      t.estado = 'EN_PROCESO';
-      evento(t, { tipo: 'desbloqueo', autorId: u.id, de: 'BLOQUEADO', a: 'EN_PROCESO', texto: texto || null });
-      auditar(u.id, 'DESBLOQUEO', t.id, 'Bloqueado → En proceso' + (texto ? ' · ' + U.truncar(texto, 70) : ''));
-      enviarCorreo(t, u, 'estado', null);
-      return t;
-    });
+    const t = await accionTicket(previo, 'desbloquear', { texto });
+    auditar(u.id, 'DESBLOQUEO', t.id, 'Bloqueado → En proceso' + (texto ? ' · ' + U.truncar(texto, 70) : ''));
+    enviarCorreo(t, u, 'estado', null);
+    asentar();
+    return t;
   }
 
   const CAMPOS_CLASIFICACION = [
@@ -669,9 +725,9 @@
   ];
 
   /** Reclasificación del ticket. */
-  function modificarClasificacion(ticketId, u, datos) {
-    const t = ticketActivoParaOperador(ticketId, u);
-    exigir(t.estado !== 'CERRADO', 'El ticket está cerrado: reabrilo para modificarlo.');
+  async function modificarClasificacion(ticketId, u, datos) {
+    const previo = ticketActivoParaOperador(ticketId, u);
+    exigir(previo.estado !== 'CERRADO', 'El ticket está cerrado: reabrilo para modificarlo.');
     const e = {};
     const s = sistema(datos.sistemaId);
     if (!s) e.sistemaId = 'Elegí el sistema o servicio afectado.';
@@ -685,21 +741,21 @@
     const cambios = [];
     for (const [campo, etiqueta, col] of CAMPOS_CLASIFICACION) {
       const nuevo = datos[campo] || null;
-      if ((t[campo] || null) !== nuevo) cambios.push({ campo, etiqueta, de: nombre(col, t[campo], '—'), a: nombre(col, nuevo, '—') });
+      if ((previo[campo] || null) !== nuevo) cambios.push({ campo, etiqueta, de: nombre(col, previo[campo], '—'), a: nombre(col, nuevo, '—') });
     }
     exigir(cambios.length, 'No hay cambios para guardar.');
-    return mutar(() => {
-      for (const [campo] of CAMPOS_CLASIFICACION) t[campo] = datos[campo] || null;
-      evento(t, { tipo: 'datos', autorId: u.id, cambios });
-      auditar(u.id, 'DATOS', t.id, cambios.map((c) => c.etiqueta + ': ' + c.de + ' → ' + c.a).join(' · '));
-      return t;
-    });
+    const t = await accionTicket(previo, 'clasificacion', {
+      sistema: datos.sistemaId, subsistema: datos.subsistemaId || null, criticidad: datos.criticidadId, tipoProblema: datos.tipoProblemaId,
+    }, 'put');
+    auditar(u.id, 'DATOS', t.id, cambios.map((c) => c.etiqueta + ': ' + c.de + ' → ' + c.a).join(' · '));
+    asentar();
+    return t;
   }
 
   /** Cierre con solución desde cualquier estado activo. */
-  function cerrar(ticketId, u, datos) {
-    const t = ticketActivoParaOperador(ticketId, u);
-    exigir(t.estado !== 'CERRADO', 'El ticket ya está cerrado.');
+  async function cerrar(ticketId, u, datos) {
+    const previo = ticketActivoParaOperador(ticketId, u);
+    exigir(previo.estado !== 'CERRADO', 'El ticket ya está cerrado.');
     let e = {};
     if (!limpio(datos.texto)) e.solucionTexto = 'Escribí la resolución.';
     if (datos.solucionCatalogoId) {
@@ -709,43 +765,31 @@
     if (datos.tipoProblemaId && !tipoProblema(datos.tipoProblemaId)) e.tipoProblemaId = 'Elegí el tipo de problema.';
     if (datos.proponer) e = Object.assign(e, validarPropuesta(datos.proponer));
     if (Object.keys(e).length) throw errorDeCampos(e);
-    return mutar(() => {
-      const ahora = U.isoAhora();
-      const mensaje = limpio(datos.mensajePublico);
-      if (mensaje) {
-        evento(t, { tipo: 'comentario', autorId: u.id, texto: mensaje, visibilidad: 'PUBLICO', adjuntos: [] });
-        auditar(u.id, 'COMENTARIO_PUBLICO', t.id, U.truncar(mensaje, 90));
-      }
-      const de = t.estado;
-      const adj = copiarAdjuntos(datos.adjuntos, u.id, ahora);
-      t.estado = 'CERRADO';
-      t.cerradoEn = ahora;
-      if (datos.tipoProblemaId) t.tipoProblemaId = datos.tipoProblemaId;
-      if (!t.operadorId) t.operadorId = u.id;
-      t.solucion = { texto: limpio(datos.texto), adjuntos: adj, solucionCatalogoId: datos.solucionCatalogoId || null, autorId: u.id, fecha: ahora };
-      evento(t, { tipo: 'cierre', autorId: u.id, de, texto: limpio(datos.texto) });
-      auditar(u.id, 'CIERRE', t.id, nombreEstado(de) + ' → Cerrado');
-      enviarCorreo(t, u, 'cierre', mensaje ? 'Mensaje de Mesa de ayuda:\n"' + mensaje + '"' : null);
-      let propuesta = null;
-      if (datos.proponer) propuesta = crearPropuesta(t, u, datos.proponer, datos.texto, adj, ahora);
-      return { ticket: t, propuesta };
+    const de = previo.estado;
+    const mensaje = limpio(datos.mensajePublico);
+    const t = await accionTicket(previo, 'cerrar', {
+      texto: limpio(datos.texto), mensajePublico: mensaje, tipoProblema: datos.tipoProblemaId || null,
+      solucionCatalogoId: datos.solucionCatalogoId || null, adjuntos: imagenes(datos.adjuntos),
     });
+    if (mensaje) auditar(u.id, 'COMENTARIO_PUBLICO', t.id, U.truncar(mensaje, 90));
+    auditar(u.id, 'CIERRE', t.id, nombreEstado(de) + ' → Cerrado');
+    enviarCorreo(t, u, 'cierre', mensaje ? 'Mensaje de Mesa de ayuda:\n"' + mensaje + '"' : null);
+    let propuesta = null;
+    if (datos.proponer) propuesta = crearPropuesta(t, u, datos.proponer, datos.texto, adjuntosSolucion(t), U.isoAhora());
+    asentar();
+    return { ticket: t, propuesta };
   }
 
   /** Reabrir: vuelve a En proceso y lo atiende quien lo reabre. */
-  function reabrir(ticketId, u, datos) {
-    const t = ticketActivoParaOperador(ticketId, u);
-    exigir(t.estado === 'CERRADO', 'Sólo se puede reabrir un ticket cerrado.');
+  async function reabrir(ticketId, u, datos) {
+    const previo = ticketActivoParaOperador(ticketId, u);
+    exigir(previo.estado === 'CERRADO', 'Sólo se puede reabrir un ticket cerrado.');
     const motivo = limpio(datos && datos.motivo);
-    return mutar(() => {
-      t.estado = 'EN_PROCESO';
-      t.cerradoEn = null;
-      t.operadorId = u.id;
-      evento(t, { tipo: 'reapertura', autorId: u.id, de: 'CERRADO', a: 'EN_PROCESO', operadorId: u.id, texto: motivo || null });
-      auditar(u.id, 'REAPERTURA', t.id, 'Cerrado → En proceso' + (motivo ? ' · ' + U.truncar(motivo, 70) : ''));
-      enviarCorreo(t, u, 'reapertura', null);
-      return t;
-    });
+    const t = await accionTicket(previo, 'reabrir', { texto: motivo });
+    auditar(u.id, 'REAPERTURA', t.id, 'Cerrado → En proceso' + (motivo ? ' · ' + U.truncar(motivo, 70) : ''));
+    enviarCorreo(t, u, 'reapertura', null);
+    asentar();
+    return t;
   }
 
   /** Recorrido del ticket, armado a partir de la actividad. */
@@ -813,19 +857,17 @@
   }
 
   /** Ticket privado: sólo lo ve ORMEN. */
-  function cambiarPrivado(ticketId, u, privado) {
-    const t = ticket(ticketId);
-    exigir(t && t.estado !== 'BORRADOR', 'El ticket no existe.');
+  async function cambiarPrivado(ticketId, u, privado) {
+    const previo = ticket(ticketId);
+    exigir(previo && previo.estado !== 'BORRADOR', 'El ticket no existe.');
     exigir(esOrmen(u), 'Sólo ORMEN puede cambiar si un ticket es privado.');
-    const creador = usuario(t.creadoPorId);
+    const creador = usuario(previo.creadoPorId);
     exigir(!creador || creador.rol !== 'CLIENTE', 'Este ticket lo creó la localidad: ya lo conocen, no se puede hacer privado.');
-    exigir(!!t.privado !== !!privado, privado ? 'El ticket ya es privado.' : 'El ticket ya es visible para la localidad.');
-    return mutar(() => {
-      t.privado = !!privado;
-      evento(t, { tipo: 'privacidad', autorId: u.id, privado: !!privado });
-      auditar(u.id, 'PRIVACIDAD', t.id, privado ? 'Marcado como privado' : 'Visible para la localidad');
-      return t;
-    });
+    exigir(!!previo.privado !== !!privado, privado ? 'El ticket ya es privado.' : 'El ticket ya es visible para la localidad.');
+    const t = await accionTicket(previo, 'privado', { privado: !!privado }, 'put');
+    auditar(u.id, 'PRIVACIDAD', t.id, privado ? 'Marcado como privado' : 'Visible para la localidad');
+    asentar();
+    return t;
   }
 
   /** Imágenes de la resolución. */
@@ -904,12 +946,12 @@
   }
 
   function usosDeSolucion(id) {
-    return db.tickets.filter((t) => t.estado === 'CERRADO' && t.solucion && t.solucion.solucionCatalogoId === id);
+    return listaTickets.filter((t) => t.estado === 'CERRADO' && t.solucion && t.solucion.solucionCatalogoId === id);
   }
 
   function contarUsos() {
     const m = new Map();
-    for (const t of db.tickets) {
+    for (const t of listaTickets) {
       if (t.estado === 'CERRADO' && t.solucion && t.solucion.solucionCatalogoId) {
         m.set(t.solucion.solucionCatalogoId, (m.get(t.solucion.solucionCatalogoId) || 0) + 1);
       }
@@ -1084,8 +1126,8 @@
 
   App.store = {
     ErrorDemo,
-    iniciar, cargar, vaciar, alCambiar, restablecer, registrarAuditoria,
-    get datos() { return db; },
+    iniciar, cargar, vaciar, actualizarTickets, alCambiar, restablecer, registrarAuditoria,
+    get datos() { return db && Object.assign(Object.create(db), { tickets: listaTickets }); },
     get almacenamientoDisponible() { return disponible; },
     // consultas
     usuario, localidad, sistema, subsistema, tipoProblema, criticidad, solucion, ticket,
