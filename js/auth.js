@@ -1,9 +1,8 @@
-/* Sesión y permisos; el ingreso es simulado. */
+/* Sesión y permisos. */
 (function (App) {
   'use strict';
 
   const CLAVE = 'ormen-tickets-demo:sesion';
-  const CONTRASENA_DEMO = 'demo';
   let memoria = null; // por si el navegador bloquea sessionStorage
 
   function guardarSesion(s) {
@@ -24,34 +23,54 @@
 
   function usuarioActual() {
     const s = leerSesion();
-    if (!s) return null;
+    if (!s || !s.token || new Date(s.expira) <= new Date()) return null;
     const u = App.store.usuario(s.usuarioId);
     if (!u || u.activo === false) return null;
     return u;
   }
 
-  function iniciarSesion(u, via) {
-    guardarSesion({ usuarioId: u.id, inicio: new Date().toISOString() });
-    App.store.registrarAuditoria(u.id, 'LOGIN', null, via);
+  async function cargarUsuarios(tk) {
+    const [usuarios, localidades, catalogos, tickets] = await Promise.all(['usuarios', 'localidades', 'catalogos', 'tickets'].map((r) => App.api.get('/api/' + r, tk)));
+    App.store.cargar(usuarios, localidades, catalogos, tickets);
   }
 
-  function ingresar(nombreUsuario, contrasena) {
+  // Recupera la sesión al recargar la página.
+  async function restaurar() {
+    const s = leerSesion();
+    if (!s) return;
+    try {
+      if (!s.token || new Date(s.expira) <= new Date()) throw new Error();
+      await cargarUsuarios(s.token);
+    } catch {
+      guardarSesion(null);
+    }
+  }
+
+  function token() {
+    const s = leerSesion();
+    return s ? s.token : null;
+  }
+
+  async function ingresar(nombreUsuario, contrasena) {
     const login = String(nombreUsuario || '').trim().toLowerCase();
     const errores = {};
     if (!login) errores.usuario = 'Escribí tu usuario.';
     if (!contrasena) errores.contrasena = 'Escribí la contraseña.';
     if (Object.keys(errores).length) return { ok: false, errores };
-    const u = App.store.datos.usuarios.find((x) => x.usuario === login);
-    if (!u || contrasena !== CONTRASENA_DEMO) return { ok: false, mensaje: 'Usuario o contraseña incorrectos. En la demo la contraseña es "demo".' };
-    if (u.activo === false) return { ok: false, mensaje: 'Ese usuario está desactivado. Un administrador lo puede volver a activar.' };
-    iniciarSesion(u, 'Usuario y contraseña');
-    return { ok: true, usuario: u };
-  }
-
-  function ingresarComo(id) {
-    const u = App.store.usuario(id);
-    if (!u || u.activo === false) return { ok: false, mensaje: 'Ese usuario no está disponible.' };
-    iniciarSesion(u, 'Acceso rápido de la demo');
+    let r;
+    try {
+      r = await App.api.post('/api/auth/ingresar', { usuario: login, contrasena });
+    } catch (e) {
+      return { ok: false, mensaje: e.status === 401 ? 'Usuario o contraseña incorrectos.' : e.message };
+    }
+    try {
+      await cargarUsuarios(r.token);
+    } catch (e) {
+      return { ok: false, mensaje: e.message };
+    }
+    const u = App.store.usuario('u-' + r.usuario.usuario);
+    guardarSesion({ usuarioId: u.id, token: r.token, expira: r.expira, inicio: new Date().toISOString() });
+    App.store.registrarAuditoria(u.id, 'LOGIN', null, 'Usuario y contraseña');
     return { ok: true, usuario: u };
   }
 
@@ -59,6 +78,7 @@
     const u = usuarioActual();
     if (u) App.store.registrarAuditoria(u.id, 'LOGOUT', null, '');
     guardarSesion(null);
+    App.store.vaciar();
   }
 
   /** Permisos por rol. */
@@ -82,5 +102,5 @@
     return !!usuario && (PERMISOS[permiso] || []).includes(usuario.rol);
   }
 
-  App.auth = { CONTRASENA_DEMO, usuarioActual, ingresar, ingresarComo, salir, puede, PERMISOS };
+  App.auth = { usuarioActual, token, restaurar, ingresar, salir, puede, PERMISOS };
 })(window.App = window.App || {});
