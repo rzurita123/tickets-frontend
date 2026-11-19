@@ -38,7 +38,7 @@ jobs:
           esac
 
   desplegar:
-    name: Desplegar en ${{ needs.verificar.outputs.entorno }}
+    name: Desplegar
     needs: verificar
     if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
