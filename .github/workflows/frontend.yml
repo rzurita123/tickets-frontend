@@ -1,0 +1,76 @@
+name: Frontend
+
+on:
+  pull_request:
+    branches: [develop, main, 'release/**']
+  push:
+    branches: [develop, main, 'release/**', 'hotfix/**']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verificar:
+    name: Verificar
+    runs-on: ubuntu-latest
+    outputs:
+      entorno: ${{ steps.entorno.outputs.nombre }}
+      swa: ${{ steps.entorno.outputs.swa }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Revisar la sintaxis
+        run: find js -name '*.js' -print0 | xargs -0 -n1 node --check
+
+      - name: Elegir el entorno
+        id: entorno
+        if: github.event_name != 'pull_request'
+        run: |
+          case "${GITHUB_REF_NAME}" in
+            main) echo "nombre=produccion" >> "$GITHUB_OUTPUT"; echo "swa=" >> "$GITHUB_OUTPUT" ;;
+            develop) echo "nombre=develop" >> "$GITHUB_OUTPUT"; echo "swa=develop" >> "$GITHUB_OUTPUT" ;;
+            *) echo "nombre=testing" >> "$GITHUB_OUTPUT"; echo "swa=testing" >> "$GITHUB_OUTPUT" ;;
+          esac
+
+  desplegar:
+    name: Desplegar
+    needs: verificar
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    environment: ${{ needs.verificar.outputs.entorno }}
+    concurrency:
+      group: frontend-${{ needs.verificar.outputs.entorno }}
+      cancel-in-progress: false
+    env:
+      API_URL: ${{ vars.API_URL }}
+      TOKEN: ${{ secrets.AZURE_STATIC_WEB_APPS_API_TOKEN }}
+    steps:
+      - name: Entorno sin configurar
+        if: env.API_URL == '' || env.TOKEN == ''
+        run: echo "::notice::El entorno ${{ needs.verificar.outputs.entorno }} no tiene API_URL o AZURE_STATIC_WEB_APPS_API_TOKEN; no se despliega."
+
+      - uses: actions/checkout@v4
+        if: env.API_URL != '' && env.TOKEN != ''
+
+      - name: Armar el sitio
+        if: env.API_URL != '' && env.TOKEN != ''
+        run: |
+          mkdir sitio
+          cp -r index.html css js assets sitio/
+          node -e "require('fs').writeFileSync('sitio/js/entorno.js', '/* Valores del entorno. */\n(function (App) {\n  \'use strict\';\n\n  App.entorno = { apiUrl: ' + JSON.stringify(process.env.API_URL) + ' };\n})(window.App = window.App || {});\n')"
+          cat sitio/js/entorno.js
+
+      - uses: Azure/static-web-apps-deploy@v1
+        if: env.API_URL != '' && env.TOKEN != ''
+        with:
+          azure_static_web_apps_api_token: ${{ env.TOKEN }}
+          action: upload
+          app_location: sitio
+          skip_app_build: true
+          skip_api_build: true
+          deployment_environment: ${{ needs.verificar.outputs.swa }}
