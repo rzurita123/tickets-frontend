@@ -82,7 +82,9 @@
     pintarPrivacidad();
     const segModo = b ? null : esCliente
       ? h('div', { class: 'modo-fijo' },
-        h('strong', null, 'Abierto'), h('span', null, 'Mesa de ayuda lo va a tomar y te avisamos por correo cuando haya novedades.'))
+        h('strong', null, 'Abierto'), h('span', null, App.api.activa
+          ? 'Mesa de ayuda lo va a tomar.'
+          : 'Mesa de ayuda lo va a tomar y te avisamos por correo cuando haya novedades.'))
       : h('fieldset', { class: 'modo-registro modo-ormen' },
         h('legend', { class: 'sr-only' }, '¿Cómo queda el ticket?'),
         ui.segmentado({
@@ -127,9 +129,10 @@
     const btnCrear = h('button', { type: 'submit', class: 'btn btn-primario btn-lg' });
     const btnBorrador = App.auth.puede('borradores', u) ? h('button', { type: 'button', class: 'btn btn-neutro btn-lg', onClick: guardarBorrador }, ui.icono('borrador', 'i-sm'), 'Guardar borrador') : null;
     const btnDescartar = b ? h('button', { type: 'button', class: 'btn btn-peligro', onClick: descartar }, ui.icono('basura', 'i-sm'), 'Descartar borrador') : null;
+    const rutaBorradores = App.api.activa ? '/borradores' : '/?vista=borradores';
     const acciones = h('div', { class: 'barra-form' },
       btnCrear, btnBorrador,
-      h('a', { class: 'btn btn-fantasma btn-lg', href: b ? '#/?vista=borradores' : '#/' }, 'Cancelar'),
+      h('a', { class: 'btn btn-fantasma btn-lg', href: b ? '#' + rutaBorradores : '#/' }, 'Cancelar'),
       btnDescartar && h('span', { class: 'crecer' }), btnDescartar);
 
     // Orden: datos del ticket, problema y modo de registro.
@@ -146,6 +149,7 @@
     const listaSug = h('div', { class: 'sugerencias lista-scroll' });
     const estadoSug = h('p', { class: 'chico suave', 'aria-live': 'polite' });
     function actualizarSugerencias() {
+      if (App.api.activa) return;
       const texto = inTitulo.value + ' ' + editorDesc.textoPlano();
       const res = App.sugerencias.buscar({ texto, sistemaId: selSistema.value, subsistemaId: selSub.value, localidadId: eligeLocalidad ? selLocalidad.value : u.localidadId });
       U.vaciar(listaSug);
@@ -218,7 +222,11 @@
       };
     }
 
-    function crear() {
+    const botonesGuardado = [btnCrear, btnBorrador, btnDescartar].filter(Boolean);
+    const bloquearGuardado = (bloqueado) => botonesGuardado.forEach((boton) => { boton.disabled = bloqueado; });
+
+    async function crear() {
+      if (btnCrear.disabled) return;
       const opciones = { borradorId: b ? b.id : null, privado: !!(chkPrivado && chkPrivado.checked) };
       if (modo === 'resuelto') {
         Object.assign(opciones, {
@@ -226,20 +234,34 @@
           solucionCatalogoId,
         });
       }
+      const datos = leer();
+      if (App.api.activa) {
+        ui.limpiarErrores(form);
+        const errores = S.validarTicket(datos, u);
+        if (Object.keys(errores).length) {
+          ui.mostrarErrores(form, errores, resumen);
+          return;
+        }
+      }
+      bloquearGuardado(true);
       try {
-        const t = S.crearTicket(leer(), u, opciones);
+        const t = await S.crearTicket(datos, u, opciones);
         ctx.marcarSucio(false);
         ui.toast(modo === 'resuelto' ? 'Ticket #' + t.numero + ' registrado como cerrado.' : 'Ticket #' + t.numero + ' creado.' + (esOperador ? ' Queda pendiente, sin asignar.' : ''));
         App.router.ir('/tickets/' + t.numero);
       } catch (e) {
         if (e.campos) ui.mostrarErrores(form, e.campos, resumen);
         else ui.mostrarError(e);
+      } finally {
+        bloquearGuardado(false);
       }
     }
 
-    function guardarBorrador() {
+    async function guardarBorrador() {
+      if (btnCrear.disabled) return;
+      bloquearGuardado(true);
       try {
-        const nuevo = S.guardarBorrador(leer(), u, b ? b.id : null);
+        const nuevo = await S.guardarBorrador(leer(), u, b ? b.id : null);
         ctx.marcarSucio(false);
         ui.limpiarErrores(form);
         ui.toast('Borrador guardado.');
@@ -248,22 +270,26 @@
       } catch (e) {
         if (e.campos) ui.mostrarErrores(form, e.campos, resumen);
         else ui.mostrarError(e);
+      } finally {
+        bloquearGuardado(false);
       }
     }
 
     async function descartar() {
       const ok = await ui.confirmar({ titulo: 'Descartar el borrador', mensaje: 'Se borra el borrador y lo que tenga cargado. No se puede deshacer.', textoConfirmar: 'Descartar', peligro: true });
-      if (!ok) return;
+      if (!ok || btnCrear.disabled) return;
+      bloquearGuardado(true);
       try {
-        S.descartarBorrador(b.id, u);
+        await S.descartarBorrador(b.id, u);
         ctx.marcarSucio(false);
         ui.toast('Borrador descartado.');
-        App.router.ir('/?vista=borradores');
+        App.router.ir(rutaBorradores);
       } catch (e) { ui.mostrarError(e); }
+      finally { bloquearGuardado(false); }
     }
 
     // --------------------------------------------------------- Columnas ---
-    const lateral = esOperador
+    const lateral = esOperador && !App.api.activa
       ? h('aside', { class: 'panel-sugerencias', 'aria-labelledby': 'sec-sugerencias' },
         h('section', { class: 'card pila' },
           h('div', { class: 'fila-entre' },
@@ -275,7 +301,7 @@
     const encabezado = h('div', { class: 'cabecera' },
       h('div', { class: 'titulos' },
         h('nav', { class: 'migas', 'aria-label': 'Ubicación' },
-          b ? [h('a', { href: '#/?vista=borradores' }, 'Mis borradores'), ui.icono('derecha', 'i-sm'), h('span', { 'aria-current': 'page' }, 'Continuar')]
+          b ? [h('a', { href: '#' + rutaBorradores }, 'Mis borradores'), ui.icono('derecha', 'i-sm'), h('span', { 'aria-current': 'page' }, 'Continuar')]
             : [h('a', { href: esCliente ? '#/' : '#/tickets' }, esCliente ? 'Inicio' : 'Tickets'), ui.icono('derecha', 'i-sm'), h('span', { 'aria-current': 'page' }, 'Crear')]),
         tituloPagina),
       b ? h('span', { class: 'badge contorno grande' }, ui.icono('borrador', 'i-sm'), 'Borrador · guardado ', ui.tiempo(b.actualizadoEn)) : null);
@@ -337,7 +363,7 @@
       return h('div', { class: 'card' }, h('h1', { id: 'titulo-pagina', tabindex: '-1', class: 'sr-only' }, 'Borrador no encontrado'), App.ui.vacio({
         icono: 'borrador',
         titulo: 'No encontramos el borrador',
-        accion: h('a', { class: 'btn btn-primario', href: '#/?vista=borradores' }, 'Ver mis borradores'),
+        accion: h('a', { class: 'btn btn-primario', href: App.api.activa ? '#/borradores' : '#/?vista=borradores' }, 'Ver mis borradores'),
       }));
     }
     return formularioTicket(ctx, { borrador: b });

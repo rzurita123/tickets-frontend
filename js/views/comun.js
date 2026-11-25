@@ -51,7 +51,7 @@
     const ui = App.ui;
     const o = op || {};
     // La estrella de favoritos va al final de la fila.
-    const conEstrella = App.auth.puede('favoritos') && !columnasPedidas.includes('favorito');
+    const conEstrella = !App.api.activa && App.auth.puede('favoritos') && !columnasPedidas.includes('favorito');
     const columnas = conEstrella && !columnasPedidas.includes('accion') ? columnasPedidas.concat('favorito') : columnasPedidas;
     const estrella = (t) => (conEstrella ? ui.botonFavorito('ticket', t.id, { etiqueta: 'ticket #' + t.numero }) : null);
     const def = {

@@ -9,36 +9,51 @@
 
   // Las rutas fijas van antes que las que tienen parámetros.
   R.registrar('/ingresar', { vista: V.login, titulo: 'Ingresar', publica: true, sinMarco: true, soloSinSesion: true });
-  R.registrar('/', { vista: V.inicio, titulo: 'Inicio' });
+  R.registrar('/', { vista: App.api.activa ? V.tickets : V.inicio, titulo: App.api.activa ? 'Tickets' : 'Inicio' });
 
   R.registrar('/tickets', { vista: V.tickets, titulo: 'Tickets' });
-  R.registrar('/tickets/nuevo', { vista: V.ticketNuevo, titulo: 'Crear ticket', roles: ['OPERADOR', 'CLIENTE', 'ADMINISTRADOR'] });
+  R.registrar('/tickets/nuevo', { vista: V.ticketNuevo, titulo: 'Crear ticket', roles: TODOS });
   R.registrar('/tickets/:numero', { vista: V.ticketDetalle, titulo: 'Ticket' });
-
   R.registrar('/borradores', { vista: V.borradores, titulo: 'Borradores', roles: TODOS });
   R.registrar('/borradores/:id', { vista: V.borrador, titulo: 'Borrador', roles: TODOS });
 
-  R.registrar('/soluciones', { vista: V.soluciones, titulo: 'Soluciones reutilizables', roles: ORMEN });
-  R.registrar('/soluciones/buscar', { vista: V.buscarSoluciones, titulo: 'Buscar una solución', roles: ORMEN });
-  R.registrar('/soluciones/nueva', { vista: V.solucionForm, titulo: 'Nueva solución reutilizable', roles: ORMEN });
-  R.registrar('/soluciones/:id', { vista: V.solucion, titulo: 'Solución reutilizable', roles: ORMEN });
-  R.registrar('/soluciones/:id/editar', { vista: V.solucionForm, titulo: 'Editar solución', roles: ['ADMINISTRADOR'] });
+  if (!App.api.activa) {
 
-  R.registrar('/estadisticas', { vista: V.estadisticas, titulo: 'Estadísticas', roles: ['ADMINISTRADOR', 'CLIENTE'] });
+    R.registrar('/soluciones', { vista: V.soluciones, titulo: 'Soluciones reutilizables', roles: ORMEN });
+    R.registrar('/soluciones/buscar', { vista: V.buscarSoluciones, titulo: 'Buscar una solución', roles: ORMEN });
+    R.registrar('/soluciones/nueva', { vista: V.solucionForm, titulo: 'Nueva solución reutilizable', roles: ORMEN });
+    R.registrar('/soluciones/:id', { vista: V.solucion, titulo: 'Solución reutilizable', roles: ORMEN });
+    R.registrar('/soluciones/:id/editar', { vista: V.solucionForm, titulo: 'Editar solución', roles: ['ADMINISTRADOR'] });
 
-  // /admin/catalogos queda por los enlaces viejos.
-  R.registrar('/catalogos', { vista: V.adminCatalogos, titulo: 'Catálogos', roles: ['ADMINISTRADOR'] });
-  R.registrar('/admin/catalogos', { vista: V.adminCatalogos, titulo: 'Catálogos', roles: ['ADMINISTRADOR'] });
-  R.registrar('/auditoria', { vista: V.auditoria, titulo: 'Auditoría', roles: ['ADMINISTRADOR'] });
+    R.registrar('/estadisticas', { vista: V.estadisticas, titulo: 'Estadísticas', roles: ['ADMINISTRADOR', 'CLIENTE'] });
 
-  R.registrar('/buscar', { vista: V.buscar, titulo: 'Buscar' });
-  R.registrar('/correos', { vista: V.correos, titulo: 'Correos simulados' });
+    // /admin/catalogos queda por los enlaces viejos.
+    R.registrar('/catalogos', { vista: V.adminCatalogos, titulo: 'Catálogos', roles: ['ADMINISTRADOR'] });
+    R.registrar('/admin/catalogos', { vista: V.adminCatalogos, titulo: 'Catálogos', roles: ['ADMINISTRADOR'] });
+    R.registrar('/auditoria', { vista: V.auditoria, titulo: 'Auditoría', roles: ['ADMINISTRADOR'] });
+
+    R.registrar('/buscar', { vista: V.buscar, titulo: 'Buscar' });
+    R.registrar('/correos', { vista: V.correos, titulo: 'Correos simulados' });
+  }
 
   function hayModalAbierto() {
     return document.body.classList.contains('con-modal');
   }
 
-  function arrancar() {
+  async function arrancar() {
+    if (App.api.activa) {
+      try {
+        await App.api.restaurar();
+      } catch (error) {
+        App.api.salir();
+        App.ui.toast(error.estado === 401
+          ? 'Tu sesión venció. Volvé a ingresar.'
+          : 'No se pudieron cargar los tickets. Volvé a ingresar.', { tipo: 'aviso' });
+      }
+      R.iniciar();
+      return;
+    }
+
     const inicio = App.store.iniciar();
 
     // Otra pestaña cambió los datos: se redibuja.

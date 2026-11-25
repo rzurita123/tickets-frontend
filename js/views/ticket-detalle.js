@@ -48,6 +48,7 @@
     if (r.error) return sinAcceso(ctx, r);
     const t = r.ticket;
 
+    const demo = !App.api.activa;
     const esOrmen = S.esOrmen(u); // Mesa de ayuda y administradores atienden tickets
     const esCliente = u.rol === 'CLIENTE';
     const activo = D.ESTADOS_ACTIVOS.includes(t.estado);
@@ -60,21 +61,26 @@
     ctx.titulo('Ticket #' + t.numero);
 
     const refrescar = () => ctx.refrescar({ enfocar: '#titulo-pagina' });
-    function ejecutar(fn, mensaje) {
+    let ejecutando = false;
+    async function ejecutar(fn, mensaje) {
+      if (ejecutando) return false;
+      ejecutando = true;
       try {
-        fn();
+        await fn();
         ui.toast(mensaje);
         refrescar();
         return true;
       } catch (e) {
         ui.mostrarError(e);
         return false;
+      } finally {
+        ejecutando = false;
       }
     }
     /** Marca los campos con error y deja la ventana abierta. */
-    function enVentana(cuerpo, fn, mensaje) {
+    async function enVentana(cuerpo, fn, mensaje) {
       try {
-        fn();
+        await fn();
       } catch (e) {
         if (e.campos) { ui.mostrarErrores(cuerpo, e.campos, cuerpo); return false; }
         throw e;
@@ -83,7 +89,7 @@
       refrescar();
       return true;
     }
-    const avisoCorreo = () => (creadorCliente && creador.activo !== false ? ' Se avisó por correo a ' + creador.nombre + '.' : '');
+    const avisoCorreo = () => (demo && creadorCliente && creador.activo !== false ? ' Se avisó por correo a ' + creador.nombre + '.' : '');
 
     const verRecorrido = () => App.recorrido.abrir(t, u);
     const solucionOriginada = esCliente ? null : S.solucionOriginadaPor(t);
@@ -104,7 +110,7 @@
       h('div', { class: 'ticket-titular' },
         h('div', { class: 'titulo-favorito' },
           h('h1', { id: 'titulo-pagina', tabindex: '-1' }, h('span', { class: 'numero' }, '#' + t.numero), ' ', t.titulo),
-          ui.botonFavorito('ticket', t.id, { etiqueta: 'ticket #' + t.numero })),
+          demo ? ui.botonFavorito('ticket', t.id, { etiqueta: 'ticket #' + t.numero }) : null),
         flujoEstado(t.estado)),
       h('dl', { class: 'meta-ticket' },
         [['Localidad', loc], ['Atiende', textoAtiende], ['Creado por', creador ? creador.nombre : '—'], ['Creado', U.fechaHora(t.creadoEn)], ['Duración', ui.duracionTicket(t, { largo: true })]]
@@ -121,7 +127,7 @@
       const cat = t.solucion.solucionCatalogoId ? S.solucion(t.solucion.solucionCatalogoId) : null;
       const autor = S.usuario(t.solucion.autorId);
       const propuesta = S.propuestaDeTicket(t) || S.soluciones().find((s) => s.ticketOrigenId === t.id);
-      const puedeProponer = esOrmen && !S.propuestaDeTicket(t);
+      const puedeProponer = demo && esOrmen && !S.propuestaDeTicket(t);
       solucion = h('section', { class: 'solucion-ticket', 'aria-labelledby': 'sec-sol' },
         h('div', { class: 'fila-entre' },
           h('h3', { id: 'sec-sol' }, ui.icono('checkCirculo'), 'Resolución del ticket'),
@@ -216,15 +222,20 @@
           esOrmen ? ui.grupo({ nombre: 'visibilidad', etiqueta: '¿Quién lo ve?', requerido: true, control: opcionesVisibilidad('visibilidad') }) : h('span'),
           h('button', { type: 'submit', class: 'btn btn-primario' }, ui.icono('enviar', 'i-sm'), esOrmen ? 'Comentar' : 'Enviar')));
       form.addEventListener('input', () => ctx.marcarSucio(!!texto.value.trim()));
-      form.addEventListener('submit', (e) => {
+      form.addEventListener('submit', async (e) => {
         e.preventDefault();
+        const boton = form.querySelector('button[type="submit"]');
+        if (boton.disabled) return;
         const visibilidad = esOrmen ? ui.valorRadio(form, 'visibilidad') : 'PUBLICO';
+        boton.disabled = true;
         try {
-          S.comentar(t.id, u, { texto: texto.value, visibilidad, adjuntos: imgs.valor() });
+          await S.comentar(t.id, u, { texto: texto.value, visibilidad, adjuntos: imgs.valor() });
         } catch (err) {
           if (err.campos) ui.mostrarErrores(form, err.campos);
           else ui.mostrarError(err);
           return;
+        } finally {
+          boton.disabled = false;
         }
         ctx.marcarSucio(false);
         ui.toast(esCliente ? 'Mensaje enviado a Mesa de ayuda.' : visibilidad === 'PRIVADO' ? 'Comentario privado agregado. Sólo lo ve ORMEN.' : 'Comentario público agregado.' + avisoCorreo());
@@ -362,7 +373,7 @@
         }
       }
       pintarBasada();
-      const sugeridas = App.sugerencias.buscar({ texto: t.titulo + ' ' + t.descripcion, sistemaId: t.sistemaId, subsistemaId: t.subsistemaId, localidadId: t.localidadId, excluirTicketId: t.id, limite: 3 });
+      const sugeridas = demo ? App.sugerencias.buscar({ texto: t.titulo + ' ' + t.descripcion, sistemaId: t.sistemaId, subsistemaId: t.subsistemaId, localidadId: t.localidadId, excluirTicketId: t.id, limite: 3 }) : [];
       const opcionesSug = sugeridas.length ? h('div', { class: 'pila-sm' },
         h('span', { class: 'chico fuerte' }, 'Partir de una sugerencia'),
         h('div', { class: 'chips' }, sugeridas.map((s) => h('button', { type: 'button', class: 'chip', onClick: () => {
@@ -378,8 +389,8 @@
         h('div', { class: 'grid-2' },
           ui.campo({ nombre: 'tipoProblemaId', id: 'cierre-tipo', etiqueta: 'Tipo de problema', control: selTp }),
           ui.campo({ nombre: 'mensajePublico', id: 'cierre-mensaje', etiqueta: 'Mensaje para la localidad', opcional: true, control: mensaje })),
-        h('label', { class: 'check', for: 'cierre-proponer' }, chk, h('strong', null, 'Proponer como solución reutilizable')),
-        bloque);
+        demo ? h('label', { class: 'check', for: 'cierre-proponer' }, chk, h('strong', null, 'Proponer como solución reutilizable')) : null,
+        demo ? bloque : null);
       cuerpo.addEventListener('submit', (e) => e.preventDefault());
       ui.modal({
         antetitulo: 'Ticket #' + t.numero,
@@ -490,7 +501,7 @@
         h('h2', { id: 'sec-acciones' }, 'Acciones'),
         h('div', { class: 'acciones-ticket' },
           h('button', { type: 'button', class: 'btn btn-neutro', onClick: abrirReabrir }, ui.icono('reabrir', 'i-sm'), 'Reabrir ticket'),
-          !S.propuestaDeTicket(t) ? h('button', { type: 'button', class: 'btn btn-neutro', onClick: abrirProponer }, ui.icono('libro', 'i-sm'), 'Proponer como solución reutilizable') : null)));
+          demo && !S.propuestaDeTicket(t) ? h('button', { type: 'button', class: 'btn btn-neutro', onClick: abrirProponer }, ui.icono('libro', 'i-sm'), 'Proponer como solución reutilizable') : null)));
     }
     // Hacer privado (o volver a hacerlo visible) un ticket que creó ORMEN.
     if (esOrmen && !creadorCliente) {
@@ -516,7 +527,7 @@
       h('dl', { class: 'datos-lista' }, datos.map(([k, v]) => [h('dt', null, k), h('dd', null, v)])),
       h('button', { type: 'button', class: 'enlace-boton chico', style: 'align-self: flex-start; margin-top: 4px', onClick: verRecorrido }, ui.icono('recorrido', 'i-sm'), ' Ver el recorrido del ticket')));
 
-    if (!esCliente && activo) {
+    if (demo && !esCliente && activo) {
       const sugeridas = App.sugerencias.buscar({ texto: t.titulo + ' ' + t.descripcion, sistemaId: t.sistemaId, subsistemaId: t.subsistemaId, localidadId: t.localidadId, excluirTicketId: t.id, limite: 4 });
       const opSug = { alUsar: esOrmen ? (x) => abrirCierre(x) : null, textoUsar: 'Usar al cerrar' };
       lateral.append(h('section', { class: 'card pila-sm', 'aria-labelledby': 'sec-sug' },

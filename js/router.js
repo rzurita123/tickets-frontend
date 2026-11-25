@@ -3,6 +3,7 @@
   'use strict';
 
   const U = App.util;
+  const tituloApp = App.api.activa ? ' · Tickets ORMEN' : ' · Tickets ORMEN (demo)';
   const rutas = [];
   let actual = null;
   let limpiezas = [];
@@ -117,7 +118,7 @@
       alSalir(fn) { limpiezas.push(fn); },
       marcarSucio(v) { sucio = v !== false; },
       refrescar(op2) { refrescar(op2); },
-      titulo(t) { ctx._titulo = t; document.title = t + ' · Tickets ORMEN (demo)'; },
+      titulo(t) { ctx._titulo = t; document.title = t + tituloApp; },
       _titulo: null,
     };
     let nodo;
@@ -128,7 +129,7 @@
       nodo = App.vistas.error(e);
     }
     App.layout.montar(nodo, { usuario, def, ctx });
-    document.title = (ctx._titulo || def.titulo || 'Inicio') + ' · Tickets ORMEN (demo)';
+    document.title = (ctx._titulo || def.titulo || 'Inicio') + tituloApp;
 
     if (o.suave) {
       if (o.scroll != null) window.scrollTo(0, o.scroll);

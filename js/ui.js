@@ -96,10 +96,10 @@
   }
 
   function mostrarError(e) {
-    if (e && e.name === 'ErrorDemo') toast(e.message, { tipo: 'error' });
+    if (e && (e.name === 'ErrorDemo' || e.estado)) toast(e.message, { tipo: 'error' });
     else {
       console.error(e);
-      toast('Algo salió mal. Probá de nuevo o restablecé los datos de la demo.', { tipo: 'error' });
+      toast(App.api.activa ? 'Algo salió mal. Probá de nuevo.' : 'Algo salió mal. Probá de nuevo o restablecé los datos de la demo.', { tipo: 'error' });
     }
   }
 
@@ -564,7 +564,7 @@
         if (!/^image\//.test(f.type)) { toast('«' + f.name + '» no es una imagen.', { tipo: 'error' }); continue; }
         try {
           const dataUrl = await procesarImagen(f);
-          lista.push({ nombre: nombreArchivo(f), dataUrl });
+          lista.push({ id: U.uid('img'), nombre: nombreArchivo(f), dataUrl });
         } catch (e) {
           toast(e.message === 'grande' ? '«' + f.name + '» es demasiado grande.' : 'No se pudo leer «' + f.name + '».', { tipo: 'error' });
         }

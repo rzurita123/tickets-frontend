@@ -23,6 +23,7 @@
   }
 
   function usuarioActual() {
+    if (App.api.activa) return App.api.usuarioActual();
     const s = leerSesion();
     if (!s) return null;
     const u = App.store.usuario(s.usuarioId);
@@ -36,6 +37,7 @@
   }
 
   function ingresar(nombreUsuario, contrasena) {
+    if (App.api.activa) return App.api.ingresar(nombreUsuario, contrasena);
     const login = String(nombreUsuario || '').trim().toLowerCase();
     const errores = {};
     if (!login) errores.usuario = 'Escribí tu usuario.';
@@ -56,6 +58,7 @@
   }
 
   function salir() {
+    if (App.api.activa) return App.api.salir();
     const u = usuarioActual();
     if (u) App.store.registrarAuditoria(u.id, 'LOGOUT', null, '');
     guardarSesion(null);

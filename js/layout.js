@@ -14,6 +14,13 @@
   function navegacion(u) {
     const S = App.store;
     const empieza = (p) => (r) => r === p || r.indexOf(p + '/') === 0;
+    if (App.api.activa) {
+      return [
+        { href: '#/tickets', texto: 'Tickets', icono: 'lista', activo: (r) => r === '/' || (empieza('/tickets')(r) && r !== '/tickets/nuevo') },
+        { href: '#/borradores', texto: 'Borradores', icono: 'borrador', activo: empieza('/borradores') },
+        { href: '#/tickets/nuevo', texto: 'Crear ticket', icono: 'mas', activo: (r) => r === '/tickets/nuevo', soloMovil: true },
+      ];
+    }
     if (u.rol === 'CLIENTE') {
       return [
         // El detalle de un ticket del cliente marca Inicio.
@@ -114,11 +121,13 @@
         h('div', { class: 'fuerte' }, u.nombre),
         h('div', { class: 'chico suave' }, App.ui.nombreRol(u) + ' · ' + detalle),
         h('div', { class: 'muy-chico suave' }, u.email)),
-      u.rol === 'ADMINISTRADOR' ? h('a', { href: '#/catalogos' }, App.ui.icono('capas'), 'Catálogos') : null,
-      h('a', { href: '#/correos' }, App.ui.icono('correo'), 'Correos simulados'),
-      h('div', { class: 'sep', role: 'separator' }),
-      h('button', { type: 'button', onClick: () => { App.auth.salir(); App.router.ir('/ingresar', { reemplazar: true }); } }, App.ui.icono('usuarios'), 'Cambiar de usuario'),
-      h('button', { type: 'button', onClick: () => restablecerDatos(u) }, App.ui.icono('refrescar'), 'Restablecer datos de la demo'),
+      !App.api.activa ? [
+        u.rol === 'ADMINISTRADOR' ? h('a', { href: '#/catalogos' }, App.ui.icono('capas'), 'Catálogos') : null,
+        h('a', { href: '#/correos' }, App.ui.icono('correo'), 'Correos simulados'),
+        h('div', { class: 'sep', role: 'separator' }),
+        h('button', { type: 'button', onClick: () => { App.auth.salir(); App.router.ir('/ingresar', { reemplazar: true }); } }, App.ui.icono('usuarios'), 'Cambiar de usuario'),
+        h('button', { type: 'button', onClick: () => restablecerDatos(u) }, App.ui.icono('refrescar'), 'Restablecer datos de la demo'),
+      ] : null,
       h('div', { class: 'sep', role: 'separator' }),
       h('button', { type: 'button', onClick: () => { App.auth.salir(); App.ui.toast('Cerraste la sesión.'); App.router.ir('/ingresar', { reemplazar: true }); } }, App.ui.icono('salir'), 'Cerrar sesión'));
     botonMenu(boton, menu);
@@ -142,7 +151,8 @@
       return h('header', { class: 'barra' }, interior);
     }
     const items = navegacion(u);
-    interior.append(h('nav', { class: 'nav', 'aria-label': 'Principal' }, items.filter((i) => !i.soloMovil).map((i) => enlaceNav(i, ruta))), buscadorGlobal(u, ctx));
+    interior.append(h('nav', { class: 'nav', 'aria-label': 'Principal' }, items.filter((i) => !i.soloMovil).map((i) => enlaceNav(i, ruta))));
+    if (!App.api.activa) interior.append(buscadorGlobal(u, ctx));
     const acciones = h('div', { class: 'barra-acciones' });
     // «Crear ticket» está siempre en la barra.
     if (App.auth.puede('tickets.crear', u) && ruta !== '/tickets/nuevo') {

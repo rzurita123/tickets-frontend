@@ -115,6 +115,13 @@
     return () => oyentes.delete(fn);
   }
 
+  function cargarDesdeApi(datos) {
+    db = Object.assign({
+      usuarios: [], localidades: [], sistemas: [], subsistemas: [], tiposProblema: [],
+      criticidades: [], gruposSoporte: [], tickets: [], soluciones: [], favoritos: {},
+    }, datos);
+  }
+
   function restablecer(usuarioId) {
     db = App.semilla.generar();
     if (usuarioId && usuario(usuarioId)) auditar(usuarioId, 'DATOS_RESTABLECIDOS', null, 'Se volvió a generar la base de ejemplo');
@@ -264,6 +271,7 @@
 
   /** Auditoría fuera de una mutación. */
   function registrarAuditoria(usuarioId, operacion, ticketId, detalle) {
+    if (App.api.activa) return;
     auditar(usuarioId, operacion, ticketId, detalle);
     escribir();
   }
@@ -1138,7 +1146,7 @@
 
   App.store = {
     ErrorDemo,
-    iniciar, alCambiar, restablecer, registrarAuditoria,
+    iniciar, alCambiar, restablecer, registrarAuditoria, cargarDesdeApi,
     get datos() { return db; },
     get almacenamientoDisponible() { return disponible; },
     // consultas
