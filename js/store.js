@@ -1140,7 +1140,7 @@
     esFavorito, favoritosDe, alternarFavorito, adjuntosSolucion, cambiarPrivado, duracionTicket, nivelDuracion, UMBRALES_DURACION,
     validarTicket, normalizarPalabras,
     // tickets
-    crearTicket, guardarBorrador, descartarBorrador,
+    ticketDesdeApi, crearTicket, guardarBorrador, descartarBorrador,
     comentar, asignar, liberar, elevar, bloquear, desbloquear, modificarClasificacion, cerrar, reabrir,
     // soluciones
     proponerSolucion, guardarSolucion, aprobarSolucion, rechazarSolucion,
