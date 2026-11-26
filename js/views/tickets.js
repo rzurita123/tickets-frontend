@@ -27,7 +27,6 @@
     const u = ctx.usuario;
     const esCliente = u.rol === 'CLIENTE';
     const loc = esCliente ? S.nombre('localidades', u.localidadId) : null;
-    const todos = S.ticketsVisibles(u);
     const q = Object.assign({}, DEFECTOS, ctx.query);
     if (!ESTADOS_FILTRO.some((e) => e.clave === q.estado)) q.estado = DEFECTOS.estado;
     if (!C.ORDENES[q.orden]) q.orden = DEFECTOS.orden;
@@ -65,23 +64,19 @@
     const activos = h('div', { class: 'filtros-activos' });
     const resultados = h('div', { 'aria-live': 'polite' });
 
-    // ---- filtrado ----
-    function coincideTexto(t, texto) {
-      const n = texto.replace(/^#/, '').trim();
-      if (/^\d+$/.test(n)) return String(t.numero).indexOf(n) === 0;
-      const norm = U.normalizar(n);
-      return U.normalizar(t.titulo + ' ' + t.descripcion).indexOf(norm) >= 0;
-    }
-
-    function filtrar(sinEstado) {
-      const est = ESTADOS_FILTRO.find((e) => e.clave === q.estado);
-      return todos.filter((t) =>
-        (sinEstado || est.fn(t)) &&
-        (!q.q || coincideTexto(t, q.q)) &&
-        (!q.loc || t.localidadId === q.loc) &&
-        (!q.sis || t.sistemaId === q.sis) &&
-        (!q.cri || t.criticidadId === q.cri) &&
-        (!q.atiende || (q.atiende === 'sin' ? !t.operadorId : t.operadorId === q.atiende)));
+    // ---- consulta a la Api ----
+    // La Api aplica la visibilidad (RNF2): un cliente solo recibe los tickets de su localidad.
+    function params(conEstado) {
+      const p = new URLSearchParams();
+      if (conEstado) p.set('estado', q.estado);
+      if (q.q) p.set('texto', q.q);
+      if (q.sis) p.set('sistema', q.sis);
+      if (q.cri) p.set('criticidad', q.cri);
+      if (!esCliente) {
+        if (q.loc) p.set('localidadId', q.loc.replace(/^loc-/, ''));
+        if (q.atiende) p.set('atiende', q.atiende.replace(/^u-/, ''));
+      }
+      return p;
     }
 
     function sincronizar() {
@@ -97,17 +92,18 @@
       pintar();
     }
 
-    function pintar() {
-      // chips de estado con cantidades
-      const base = filtrar(true);
+    let conteos = {};
+    let secuencia = 0;
+
+    function pintarChips() {
       U.vaciar(chips);
       ESTADOS_FILTRO.forEach((e) => {
-        const n = base.filter(e.fn).length;
         chips.append(h('button', { type: 'button', 'aria-pressed': String(q.estado === e.clave), dataset: { tono: e.tono || null }, onClick: () => cambiar('estado', e.clave) },
-          h('span', null, e.texto), h('span', { class: 'cuenta' }, U.formatoNumero(n))));
+          h('span', null, e.texto), h('span', { class: 'cuenta' }, U.formatoNumero(conteos[e.clave] || 0))));
       });
+    }
 
-      // filtros activos
+    function pintarActivos() {
       const nFiltros = ['loc', 'sis', 'cri', 'atiende'].filter((k) => q[k] && controles[k]).length;
       cuentaFiltros.textContent = nFiltros || '';
       cuentaFiltros.hidden = !nFiltros;
@@ -129,17 +125,15 @@
           cambiar('q', '');
         } }, 'Limpiar filtros'));
       }
+    }
 
-      // resultados
-      const lista = filtrar(false).sort(C.ORDENES[q.orden].fn);
-      const paginas = Math.max(1, Math.ceil(lista.length / POR_PAGINA));
-      const pagina = Math.min(Math.max(1, Number(q.p) || 1), paginas);
-      const pag = lista.slice((pagina - 1) * POR_PAGINA, pagina * POR_PAGINA);
+    function pintarResultados(pagina) {
       U.vaciar(resultados);
+      const lista = pagina.items.map((x) => S.ticketDesdeApi(Object.assign({ descripcion: '' }, x)));
       if (!lista.length) {
         resultados.append(ui.vacio({
           icono: 'buscar',
-          titulo: todos.length ? 'No hay tickets con estos filtros' : 'Todavía no hay tickets',
+          titulo: conteos.todos ? 'No hay tickets con estos filtros' : 'Todavía no hay tickets',
         }));
         return;
       }
@@ -147,8 +141,33 @@
         ? ['numero', 'ticket', 'creador', 'estado', 'criticidad', 'duracion', 'actualizado']
         : ['numero', 'ticket', 'localidad', 'estado', 'criticidad', 'atiende', 'duracion', 'actualizado'];
       resultados.append(
-        C.tablaTickets(pag, cols, { caption: 'Tickets' }),
-        ui.paginador({ total: lista.length, pagina, porPagina: POR_PAGINA, alCambiar: (p) => { cambiar('p', String(p)); document.getElementById('titulo-pagina').scrollIntoView({ block: 'start' }); } }));
+        C.tablaTickets(lista, cols, { caption: 'Tickets' }),
+        ui.paginador({ total: pagina.total, pagina: pagina.pagina, porPagina: pagina.porPagina, alCambiar: (p) => { cambiar('p', String(p)); document.getElementById('titulo-pagina').scrollIntoView({ block: 'start' }); } }));
+    }
+
+    async function pintar() {
+      const mia = ++secuencia;
+      pintarChips();
+      pintarActivos();
+      const listado = params(true);
+      listado.set('orden', q.orden);
+      listado.set('pagina', String(Math.max(1, Number(q.p) || 1)));
+      listado.set('porPagina', String(POR_PAGINA));
+      try {
+        const token = App.auth.token();
+        const [resumen, pagina] = await Promise.all([
+          App.api.get('/api/tickets/resumen?' + params(false), token),
+          App.api.get('/api/tickets/listado?' + listado, token),
+        ]);
+        if (mia !== secuencia) return; // llegó una respuesta más nueva
+        conteos = resumen;
+        pintarChips();
+        pintarResultados(pagina);
+      } catch (e) {
+        if (mia !== secuencia) return;
+        U.vaciar(resultados);
+        resultados.append(ui.vacio({ icono: 'buscar', titulo: 'No se pudieron cargar los tickets. ' + (e.message || '') }));
+      }
     }
 
     inBuscar.addEventListener('input', U.debounce(() => cambiar('q', inBuscar.value.trim()), 220));
