@@ -6,7 +6,7 @@
   const h = U.h;
   const D = App.dominio;
 
-  const POR_PAGINA = 15;
+  const TAMANOS_PAGINA = ['15', '30', '50'];
 
   // Primero los cerrados.
   const ESTADOS_FILTRO = [
@@ -18,7 +18,14 @@
     { clave: 'todos', texto: 'Todos', fn: () => true },
   ];
 
-  const DEFECTOS = { estado: 'CERRADO', orden: 'recientes' };
+  const DEFECTOS = { estado: 'CERRADO', orden: 'recientes', cantidad: '15' };
+  const FILTROS = ['loc', 'sis', 'cri', 'atiende', 'desde', 'hasta'];
+
+  function fechaLocal(iso) {
+    const fecha = new Date(iso);
+    return [fecha.getFullYear(), fecha.getMonth() + 1, fecha.getDate()]
+      .map((parte) => String(parte).padStart(2, '0')).join('-');
+  }
 
   App.vistas.tickets = function (ctx) {
     const S = App.store;
@@ -30,7 +37,9 @@
     const todos = S.ticketsVisibles(u);
     const q = Object.assign({}, DEFECTOS, ctx.query);
     if (!ESTADOS_FILTRO.some((e) => e.clave === q.estado)) q.estado = DEFECTOS.estado;
-    if (!C.ORDENES[q.orden]) q.orden = DEFECTOS.orden;
+    if (!Object.hasOwn(C.ORDENES, q.orden)) q.orden = DEFECTOS.orden;
+    if (!TAMANOS_PAGINA.includes(q.cantidad)) q.cantidad = DEFECTOS.cantidad;
+    const fechasCreacion = new Map(todos.map((t) => [t.id, fechaLocal(t.creadoEn)]));
 
     // ---- controles ----
     const inBuscar = h('input', { id: 'f-buscar', class: 'control', type: 'search', placeholder: 'Buscar por número o texto', 'aria-label': 'Buscar tickets', value: q.q || '' });
@@ -43,15 +52,22 @@
       sis: ui.select({ id: 'f-sis', vacio: 'Todos', valor: q.sis, opciones: S.sistemas().map((s) => ({ valor: s.id, texto: s.nombre })) }),
       cri: ui.select({ id: 'f-cri', vacio: 'Todas', valor: q.cri, opciones: S.catalogo('criticidades').map((c) => ({ valor: c.id, texto: c.nombre })) }),
       atiende: !esCliente && ui.select({ id: 'f-atiende', vacio: 'Cualquiera', valor: q.atiende, opciones: opcionesAtiende }),
+      desde: h('input', { id: 'f-desde', type: 'date', class: 'control', value: q.desde || '' }),
+      hasta: h('input', { id: 'f-hasta', type: 'date', class: 'control', value: q.hasta || '' }),
       orden: ui.select({ id: 'f-orden', valor: q.orden, opciones: Object.keys(C.ORDENES).map((k) => ({ valor: k, texto: C.ORDENES[k].texto })) }),
+      cantidad: ui.select({ id: 'f-cantidad', valor: q.cantidad, opciones: TAMANOS_PAGINA.map((valor) => ({ valor, texto: valor })) }),
     };
-    const ETIQUETAS = { loc: 'Localidad', sis: 'Sistema', cri: 'Criticidad', atiende: 'Atiende', orden: 'Orden' };
+    q.desde = controles.desde.value;
+    q.hasta = controles.hasta.value;
+    const ETIQUETAS = {
+      loc: 'Localidad', sis: 'Sistema', cri: 'Criticidad', atiende: 'Atiende',
+      desde: 'Creado desde', hasta: 'Creado hasta', orden: 'Orden', cantidad: 'Tickets por página',
+    };
 
     // Filtros secundarios: se despliegan con el botón "Filtros".
     const filtros = h('div', { class: 'filtros filtros-grilla', id: 'panel-filtros', role: 'search', 'aria-label': 'Filtros de tickets' },
       Object.keys(controles).filter((k) => controles[k]).map((k) => ui.campo({ nombre: k, id: controles[k].id, etiqueta: ETIQUETAS[k], control: controles[k] })));
-    const hayFiltros = () => ['loc', 'sis', 'cri', 'atiende'].some((k) => q[k] && controles[k]);
-    filtros.hidden = !hayFiltros();
+    filtros.hidden = !FILTROS.some((k) => q[k] && controles[k]) && q.orden === DEFECTOS.orden && q.cantidad === DEFECTOS.cantidad;
     const cuentaFiltros = h('span', { class: 'contador' });
     const btnFiltros = h('button', { type: 'button', class: 'btn btn-neutro', 'aria-controls': 'panel-filtros', 'aria-expanded': String(!filtros.hidden), onClick: () => {
       filtros.hidden = !filtros.hidden;
@@ -81,6 +97,8 @@
         (!q.loc || t.localidadId === q.loc) &&
         (!q.sis || t.sistemaId === q.sis) &&
         (!q.cri || t.criticidadId === q.cri) &&
+        (!q.desde || fechasCreacion.get(t.id) >= q.desde) &&
+        (!q.hasta || fechasCreacion.get(t.id) <= q.hasta) &&
         (!q.atiende || (q.atiende === 'sin' ? !t.operadorId : t.operadorId === q.atiende)));
     }
 
@@ -108,34 +126,42 @@
       });
 
       // filtros activos
-      const nFiltros = ['loc', 'sis', 'cri', 'atiende'].filter((k) => q[k] && controles[k]).length;
+      const nFiltros = FILTROS.filter((k) => q[k] && controles[k]).length;
       cuentaFiltros.textContent = nFiltros || '';
       cuentaFiltros.hidden = !nFiltros;
       U.vaciar(activos);
       activos.hidden = !nFiltros && !q.q;
       const quitables = [];
       if (q.q) quitables.push(['q', 'Búsqueda: «' + q.q + '»']);
-      ['loc', 'sis', 'cri', 'atiende'].forEach((k) => {
+      FILTROS.forEach((k) => {
         if (!q[k] || !controles[k]) return;
-        const opt = Array.from(controles[k].options).find((o) => o.value === q[k]);
-        quitables.push([k, ETIQUETAS[k] + ': ' + (opt ? opt.textContent : q[k])]);
+        const opt = controles[k].selectedOptions?.[0];
+        const texto = opt ? opt.textContent : q[k].split('-').reverse().join('/');
+        quitables.push([k, ETIQUETAS[k] + ': ' + texto]);
       });
       quitables.forEach(([k, texto]) => activos.append(h('span', { class: 'chip-activo' }, texto,
         h('button', { type: 'button', 'aria-label': 'Quitar filtro ' + texto, onClick: () => { if (k === 'q') inBuscar.value = ''; else controles[k].value = ''; cambiar(k, ''); } }, ui.icono('x', 'i-sm')))));
       if (quitables.length > 1) {
         activos.append(h('button', { type: 'button', class: 'enlace-boton chico', onClick: () => {
           inBuscar.value = '';
-          ['loc', 'sis', 'cri', 'atiende'].forEach((k) => { if (controles[k]) controles[k].value = ''; q[k] = ''; });
+          FILTROS.forEach((k) => { if (controles[k]) controles[k].value = ''; q[k] = ''; });
           cambiar('q', '');
         } }, 'Limpiar filtros'));
       }
 
       // resultados
-      const lista = filtrar(false).sort(C.ORDENES[q.orden].fn);
-      const paginas = Math.max(1, Math.ceil(lista.length / POR_PAGINA));
-      const pagina = Math.min(Math.max(1, Number(q.p) || 1), paginas);
-      const pag = lista.slice((pagina - 1) * POR_PAGINA, pagina * POR_PAGINA);
       U.vaciar(resultados);
+      if (q.desde && q.hasta && q.desde > q.hasta) {
+        resultados.append(ui.aviso('La fecha desde debe ser anterior o igual a la fecha hasta.', 'rojo'));
+        return;
+      }
+      const ordenar = C.ORDENES[q.orden].fn;
+      const lista = filtrar(false).sort((a, b) => ordenar(a, b) || a.numero - b.numero);
+      const porPagina = Number(q.cantidad);
+      const paginas = Math.max(1, Math.ceil(lista.length / porPagina));
+      const solicitada = Number(q.p);
+      const pagina = Number.isInteger(solicitada) ? Math.min(Math.max(1, solicitada), paginas) : 1;
+      const pag = lista.slice((pagina - 1) * porPagina, pagina * porPagina);
       if (!lista.length) {
         resultados.append(ui.vacio({
           icono: 'buscar',
@@ -144,11 +170,11 @@
         return;
       }
       const cols = esCliente
-        ? ['numero', 'ticket', 'creador', 'estado', 'criticidad', 'duracion', 'actualizado']
-        : ['numero', 'ticket', 'localidad', 'estado', 'criticidad', 'atiende', 'duracion', 'actualizado'];
+        ? ['numero', 'ticket', 'creador', 'estado', 'criticidad', 'creado', 'duracion', 'actualizado']
+        : ['numero', 'ticket', 'localidad', 'estado', 'criticidad', 'atiende', 'creado', 'duracion', 'actualizado'];
       resultados.append(
         C.tablaTickets(pag, cols, { caption: 'Tickets' }),
-        ui.paginador({ total: lista.length, pagina, porPagina: POR_PAGINA, alCambiar: (p) => { cambiar('p', String(p)); document.getElementById('titulo-pagina').scrollIntoView({ block: 'start' }); } }));
+        ui.paginador({ total: lista.length, pagina, porPagina, alCambiar: (p) => { cambiar('p', String(p)); document.getElementById('titulo-pagina').scrollIntoView({ block: 'start' }); } }));
     }
 
     inBuscar.addEventListener('input', U.debounce(() => cambiar('q', inBuscar.value.trim()), 220));
