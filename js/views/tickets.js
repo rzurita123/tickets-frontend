@@ -6,7 +6,7 @@
   const h = U.h;
   const D = App.dominio;
 
-  const POR_PAGINA = 15;
+  const TAMANOS_PAGINA = ['15', '30', '50'];
 
   // Primero los cerrados.
   const ESTADOS_FILTRO = [
@@ -18,7 +18,16 @@
     { clave: 'todos', texto: 'Todos', fn: () => true },
   ];
 
-  const DEFECTOS = { estado: 'CERRADO', orden: 'recientes' };
+  const DEFECTOS = { estado: 'CERRADO', orden: 'recientes', cantidad: '15' };
+  const FILTROS = ['loc', 'sis', 'cri', 'atiende', 'desde', 'hasta'];
+  const FECHA = /^\d{4}-\d{2}-\d{2}$/;
+
+  // Día local a instante: desde las 00:00 del primer día hasta las 00:00 del día siguiente al último.
+  function inicioDelDia(fecha, diasMas) {
+    const d = new Date(fecha + 'T00:00:00');
+    d.setDate(d.getDate() + (diasMas || 0));
+    return d.toISOString();
+  }
 
   App.vistas.tickets = function (ctx) {
     const S = App.store;
@@ -30,6 +39,8 @@
     const q = Object.assign({}, DEFECTOS, ctx.query);
     if (!ESTADOS_FILTRO.some((e) => e.clave === q.estado)) q.estado = DEFECTOS.estado;
     if (!C.ORDENES[q.orden]) q.orden = DEFECTOS.orden;
+    if (!TAMANOS_PAGINA.includes(q.cantidad)) q.cantidad = DEFECTOS.cantidad;
+    ['desde', 'hasta'].forEach((k) => { if (q[k] && !FECHA.test(q[k])) q[k] = ''; });
 
     // ---- controles ----
     const inBuscar = h('input', { id: 'f-buscar', class: 'control', type: 'search', placeholder: 'Buscar por número o texto', 'aria-label': 'Buscar tickets', value: q.q || '' });
@@ -42,14 +53,20 @@
       sis: ui.select({ id: 'f-sis', vacio: 'Todos', valor: q.sis, opciones: S.sistemas().map((s) => ({ valor: s.id, texto: s.nombre })) }),
       cri: ui.select({ id: 'f-cri', vacio: 'Todas', valor: q.cri, opciones: S.catalogo('criticidades').map((c) => ({ valor: c.id, texto: c.nombre })) }),
       atiende: !esCliente && ui.select({ id: 'f-atiende', vacio: 'Cualquiera', valor: q.atiende, opciones: opcionesAtiende }),
+      desde: h('input', { id: 'f-desde', class: 'control', type: 'date', value: q.desde || '' }),
+      hasta: h('input', { id: 'f-hasta', class: 'control', type: 'date', value: q.hasta || '' }),
       orden: ui.select({ id: 'f-orden', valor: q.orden, opciones: Object.keys(C.ORDENES).map((k) => ({ valor: k, texto: C.ORDENES[k].texto })) }),
+      cantidad: ui.select({ id: 'f-cantidad', valor: q.cantidad, opciones: TAMANOS_PAGINA.map((n) => ({ valor: n, texto: n })) }),
     };
-    const ETIQUETAS = { loc: 'Localidad', sis: 'Sistema', cri: 'Criticidad', atiende: 'Atiende', orden: 'Orden' };
+    const ETIQUETAS = {
+      loc: 'Localidad', sis: 'Sistema', cri: 'Criticidad', atiende: 'Atiende',
+      desde: 'Creado desde', hasta: 'Creado hasta', orden: 'Orden', cantidad: 'Tickets por página',
+    };
 
     // Filtros secundarios: se despliegan con el botón "Filtros".
     const filtros = h('div', { class: 'filtros filtros-grilla', id: 'panel-filtros', role: 'search', 'aria-label': 'Filtros de tickets' },
       Object.keys(controles).filter((k) => controles[k]).map((k) => ui.campo({ nombre: k, id: controles[k].id, etiqueta: ETIQUETAS[k], control: controles[k] })));
-    const hayFiltros = () => ['loc', 'sis', 'cri', 'atiende'].some((k) => q[k] && controles[k]);
+    const hayFiltros = () => FILTROS.some((k) => q[k] && controles[k]);
     filtros.hidden = !hayFiltros();
     const cuentaFiltros = h('span', { class: 'contador' });
     const btnFiltros = h('button', { type: 'button', class: 'btn btn-neutro', 'aria-controls': 'panel-filtros', 'aria-expanded': String(!filtros.hidden), onClick: () => {
@@ -72,6 +89,8 @@
       if (q.q) p.set('texto', q.q);
       if (q.sis) p.set('sistema', q.sis);
       if (q.cri) p.set('criticidad', q.cri);
+      if (q.desde) p.set('desde', inicioDelDia(q.desde));
+      if (q.hasta) p.set('hasta', inicioDelDia(q.hasta, 1));
       if (!esCliente) {
         if (q.loc) p.set('localidadId', q.loc.replace(/^loc-/, ''));
         if (q.atiende) p.set('atiende', q.atiende.replace(/^u-/, ''));
@@ -104,24 +123,24 @@
     }
 
     function pintarActivos() {
-      const nFiltros = ['loc', 'sis', 'cri', 'atiende'].filter((k) => q[k] && controles[k]).length;
+      const nFiltros = FILTROS.filter((k) => q[k] && controles[k]).length;
       cuentaFiltros.textContent = nFiltros || '';
       cuentaFiltros.hidden = !nFiltros;
       U.vaciar(activos);
       activos.hidden = !nFiltros && !q.q;
       const quitables = [];
       if (q.q) quitables.push(['q', 'Búsqueda: «' + q.q + '»']);
-      ['loc', 'sis', 'cri', 'atiende'].forEach((k) => {
+      FILTROS.forEach((k) => {
         if (!q[k] || !controles[k]) return;
-        const opt = Array.from(controles[k].options).find((o) => o.value === q[k]);
-        quitables.push([k, ETIQUETAS[k] + ': ' + (opt ? opt.textContent : q[k])]);
+        const opt = controles[k].options && Array.from(controles[k].options).find((o) => o.value === q[k]);
+        quitables.push([k, ETIQUETAS[k] + ': ' + (opt ? opt.textContent : q[k].split('-').reverse().join('/'))]);
       });
       quitables.forEach(([k, texto]) => activos.append(h('span', { class: 'chip-activo' }, texto,
         h('button', { type: 'button', 'aria-label': 'Quitar filtro ' + texto, onClick: () => { if (k === 'q') inBuscar.value = ''; else controles[k].value = ''; cambiar(k, ''); } }, ui.icono('x', 'i-sm')))));
       if (quitables.length > 1) {
         activos.append(h('button', { type: 'button', class: 'enlace-boton chico', onClick: () => {
           inBuscar.value = '';
-          ['loc', 'sis', 'cri', 'atiende'].forEach((k) => { if (controles[k]) controles[k].value = ''; q[k] = ''; });
+          FILTROS.forEach((k) => { if (controles[k]) controles[k].value = ''; q[k] = ''; });
           cambiar('q', '');
         } }, 'Limpiar filtros'));
       }
@@ -133,7 +152,7 @@
       if (!lista.length) {
         resultados.append(ui.vacio({
           icono: 'buscar',
-          titulo: conteos.todos ? 'No hay tickets con estos filtros' : 'Todavía no hay tickets',
+          titulo: conteos.todos || hayFiltros() || q.q ? 'No hay tickets con estos filtros' : 'Todavía no hay tickets',
         }));
         return;
       }
@@ -149,10 +168,18 @@
       const mia = ++secuencia;
       pintarChips();
       pintarActivos();
+      if (q.desde && q.hasta && q.desde > q.hasta) {
+        secuencia++;
+        conteos = {};
+        pintarChips();
+        U.vaciar(resultados);
+        resultados.append(ui.vacio({ icono: 'buscar', titulo: 'La fecha desde no puede ser posterior a la fecha hasta' }));
+        return;
+      }
       const listado = params(true);
       listado.set('orden', q.orden);
       listado.set('pagina', String(Math.max(1, Number(q.p) || 1)));
-      listado.set('porPagina', String(POR_PAGINA));
+      listado.set('porPagina', q.cantidad);
       try {
         const token = App.auth.token();
         const [resumen, pagina] = await Promise.all([
