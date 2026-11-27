@@ -15,7 +15,7 @@
       const ok = await ui.confirmar({ titulo: 'Descartar el borrador', mensaje: 'Se borra el borrador y lo que tenga cargado. No se puede deshacer.', textoConfirmar: 'Descartar', peligro: true });
       if (!ok) return;
       try {
-        S.descartarBorrador(b.id, u);
+        await S.descartarBorrador(b.id, u);
         ui.toast('Borrador descartado.');
         ctx.refrescar();
       } catch (e) { ui.mostrarError(e); }

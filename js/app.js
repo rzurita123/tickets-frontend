@@ -38,8 +38,9 @@
     return document.body.classList.contains('con-modal');
   }
 
-  function arrancar() {
+  async function arrancar() {
     const inicio = App.store.iniciar();
+    await App.auth.restaurar();
 
     // Otra pestaña cambió los datos: se redibuja.
     let avisoPendiente = null;
@@ -48,7 +49,7 @@
       if (!info.externo) return;
       if (R.estaSucio() || hayModalAbierto()) {
         if (avisoPendiente) avisoPendiente();
-        avisoPendiente = App.ui.toast('Hubo cambios en otra pestaña.', {
+        avisoPendiente = App.ui.toast('Hubo cambios en los datos.', {
           tipo: 'aviso',
           accion: { texto: 'Actualizar', fn: () => { avisoPendiente = null; App.router.refrescar(); } },
           duracion: 12000,
@@ -59,6 +60,11 @@
     });
 
     R.iniciar();
+
+    // Trae los cambios de otros usuarios.
+    setInterval(() => {
+      if (App.auth.usuarioActual() && !document.hidden) App.store.actualizarTickets().catch(() => {});
+    }, 30000);
 
     if (!inicio.almacenamiento) {
       App.ui.toast('Este navegador no deja guardar datos: la demo funciona, pero los cambios se pierden al recargar.', { tipo: 'aviso', duracion: 10000 });

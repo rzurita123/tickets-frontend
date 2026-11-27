@@ -218,7 +218,7 @@
       };
     }
 
-    function crear() {
+    async function crear() {
       const opciones = { borradorId: b ? b.id : null, privado: !!(chkPrivado && chkPrivado.checked) };
       if (modo === 'resuelto') {
         Object.assign(opciones, {
@@ -227,7 +227,7 @@
         });
       }
       try {
-        const t = S.crearTicket(leer(), u, opciones);
+        const t = await S.crearTicket(leer(), u, opciones);
         ctx.marcarSucio(false);
         ui.toast(modo === 'resuelto' ? 'Ticket #' + t.numero + ' registrado como cerrado.' : 'Ticket #' + t.numero + ' creado.' + (esOperador ? ' Queda pendiente, sin asignar.' : ''));
         App.router.ir('/tickets/' + t.numero);
@@ -237,9 +237,9 @@
       }
     }
 
-    function guardarBorrador() {
+    async function guardarBorrador() {
       try {
-        const nuevo = S.guardarBorrador(leer(), u, b ? b.id : null);
+        const nuevo = await S.guardarBorrador(leer(), u, b ? b.id : null);
         ctx.marcarSucio(false);
         ui.limpiarErrores(form);
         ui.toast('Borrador guardado.');
@@ -255,7 +255,7 @@
       const ok = await ui.confirmar({ titulo: 'Descartar el borrador', mensaje: 'Se borra el borrador y lo que tenga cargado. No se puede deshacer.', textoConfirmar: 'Descartar', peligro: true });
       if (!ok) return;
       try {
-        S.descartarBorrador(b.id, u);
+        await S.descartarBorrador(b.id, u);
         ctx.marcarSucio(false);
         ui.toast('Borrador descartado.');
         App.router.ir('/?vista=borradores');

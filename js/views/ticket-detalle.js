@@ -60,9 +60,9 @@
     ctx.titulo('Ticket #' + t.numero);
 
     const refrescar = () => ctx.refrescar({ enfocar: '#titulo-pagina' });
-    function ejecutar(fn, mensaje) {
+    async function ejecutar(fn, mensaje) {
       try {
-        fn();
+        await fn();
         ui.toast(mensaje);
         refrescar();
         return true;
@@ -72,9 +72,9 @@
       }
     }
     /** Marca los campos con error y deja la ventana abierta. */
-    function enVentana(cuerpo, fn, mensaje) {
+    async function enVentana(cuerpo, fn, mensaje) {
       try {
-        fn();
+        await fn();
       } catch (e) {
         if (e.campos) { ui.mostrarErrores(cuerpo, e.campos, cuerpo); return false; }
         throw e;
@@ -216,11 +216,11 @@
           esOrmen ? ui.grupo({ nombre: 'visibilidad', etiqueta: '¿Quién lo ve?', requerido: true, control: opcionesVisibilidad('visibilidad') }) : h('span'),
           h('button', { type: 'submit', class: 'btn btn-primario' }, ui.icono('enviar', 'i-sm'), esOrmen ? 'Comentar' : 'Enviar')));
       form.addEventListener('input', () => ctx.marcarSucio(!!texto.value.trim()));
-      form.addEventListener('submit', (e) => {
+      form.addEventListener('submit', async (e) => {
         e.preventDefault();
         const visibilidad = esOrmen ? ui.valorRadio(form, 'visibilidad') : 'PUBLICO';
         try {
-          S.comentar(t.id, u, { texto: texto.value, visibilidad, adjuntos: imgs.valor() });
+          await S.comentar(t.id, u, { texto: texto.value, visibilidad, adjuntos: imgs.valor() });
         } catch (err) {
           if (err.campos) ui.mostrarErrores(form, err.campos);
           else ui.mostrarError(err);
