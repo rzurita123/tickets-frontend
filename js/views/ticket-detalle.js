@@ -30,7 +30,7 @@
   function sinAcceso(ctx, r) {
     const S = App.store;
     const u = ctx.usuario;
-    if (r.error === 'sin-acceso') S.registrarAuditoria(u.id, 'ACCESO_DENEGADO', r.ticket.id, 'Ticket #' + r.ticket.numero + ' de otra localidad');
+    if (r.error === 'sin-acceso') S.avisarAccesoDenegado('/tickets/' + r.ticket.numero);
     const esCliente = u.rol === 'CLIENTE';
     ctx.titulo('Ticket no disponible');
     return h('div', { class: 'card' }, h('h1', { id: 'titulo-pagina', tabindex: '-1', class: 'sr-only' }, 'Ticket no disponible'), App.ui.vacio({

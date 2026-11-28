@@ -160,10 +160,8 @@
     return h('div', { class: 'card' }, h('h1', { id: 'titulo-pagina', tabindex: '-1', class: 'sr-only' }, 'Error'), App.ui.vacio({
       icono: 'alerta',
       titulo: 'Algo salió mal al mostrar esta pantalla',
-      texto: (e && e.message ? e.message + '. ' : '') + 'Si el problema sigue, restablecé los datos de la demo desde el menú de tu usuario.',
-      accion: h('div', { class: 'fila', style: 'justify-content: center' },
-        h('a', { class: 'btn btn-primario', href: '#/' }, 'Ir al inicio'),
-        h('button', { type: 'button', class: 'btn btn-neutro', onClick: () => App.layout.restablecerDatos(App.auth.usuarioActual()) }, 'Restablecer datos')),
+      texto: (e && e.message ? e.message + '. ' : '') + 'Si el problema sigue, volvé a ingresar.',
+      accion: h('a', { class: 'btn btn-primario', href: '#/' }, 'Ir al inicio'),
     }));
   };
 

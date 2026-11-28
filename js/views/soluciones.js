@@ -190,7 +190,7 @@
       const ok = await ui.confirmar({ titulo: 'Aprobar la solución reutilizable', mensaje: 'Se empieza a sugerir al cargar tickets parecidos.', textoConfirmar: 'Aprobar' });
       if (!ok) return;
       try {
-        S.aprobarSolucion(s.id, u);
+        await S.aprobarSolucion(s.id, u);
         ui.toast('Solución reutilizable aprobada: desde ahora se sugiere.');
         ctx.refrescar({ enfocar: '#titulo-pagina' });
       } catch (e) { ui.mostrarError(e); }
@@ -208,8 +208,8 @@
         acciones: [
           { texto: 'Cancelar' },
           {
-            texto: 'Rechazar', clase: 'btn-peligro', icono: 'xCirculo', fn: () => {
-              try { S.rechazarSolucion(s.id, u, motivo.value); } catch (e) {
+            texto: 'Rechazar', clase: 'btn-peligro', icono: 'xCirculo', fn: async () => {
+              try { await S.rechazarSolucion(s.id, u, motivo.value); } catch (e) {
                 if (e.campos) { ui.mostrarErrores(cuerpo, e.campos); return false; }
                 throw e;
               }
@@ -348,16 +348,16 @@
         h('a', { class: 'btn btn-fantasma btn-lg', href: existente ? '#/soluciones/' + existente.id : '#/soluciones' }, 'Cancelar')));
     form.addEventListener('input', marcar);
     form.addEventListener('change', marcar);
-    form.addEventListener('submit', (e) => {
+    form.addEventListener('submit', async (e) => {
       e.preventDefault();
       const datos = { titulo: inTitulo.value, sistemaId: selSis.value, subsistemaId: selSub.value, descripcion: editorDesc.valor().texto, palabrasClave: palabras.valor(), adjuntos: editorDesc.valor().adjuntos };
       try {
         let s;
         if (aprobarAlGuardar) {
-          S.guardarSolucion(datos, u, existente.id);
-          s = S.aprobarSolucion(existente.id, u);
+          await S.guardarSolucion(datos, u, existente.id);
+          s = await S.aprobarSolucion(existente.id, u);
         } else {
-          s = S.guardarSolucion(datos, u, existente ? existente.id : null);
+          s = await S.guardarSolucion(datos, u, existente ? existente.id : null);
         }
         ctx.marcarSucio(false);
         ui.toast(aprobarAlGuardar ? 'Solución reutilizable aprobada: desde ahora se sugiere.' : existente ? 'Cambios guardados.' : esAdmin ? 'Solución reutilizable cargada.' : 'Solución reutilizable propuesta: queda por aprobar.');

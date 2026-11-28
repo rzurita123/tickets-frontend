@@ -12,6 +12,7 @@
     const ui = App.ui;
     const u = ctx.usuario;
     const esCliente = u.rol === 'CLIENTE';
+    S.actualizarCorreos().catch(() => {});
     const todos = S.correosPara(u).slice().sort((a, b) => b.fecha.localeCompare(a.fecha));
     const q = Object.assign({}, ctx.query);
 
