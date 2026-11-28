@@ -88,20 +88,6 @@
     menu.addEventListener('click', (e) => { if (e.target.closest('a, button')) cerrarMenus(); });
   }
 
-  async function restablecerDatos(u) {
-    const ok = await App.ui.confirmar({
-      titulo: 'Restablecer los datos de la demo',
-      mensaje: 'Se borran los tickets, comentarios, soluciones y usuarios que hayas cargado en este navegador y se vuelven a generar los datos de ejemplo. Las demás pestañas también se actualizan.',
-      textoConfirmar: 'Restablecer',
-      peligro: true,
-    });
-    if (!ok) return;
-    App.router.descartarCambios();
-    App.store.restablecer(u && u.id);
-    App.ui.toast('Listo: la demo volvió a los datos de ejemplo.');
-    App.router.ir('/', { reemplazar: true });
-  }
-
   function menuUsuario(u) {
     const S = App.store;
     const detalle = u.rol === 'CLIENTE' ? S.nombre('localidades', u.localidadId) : u.cargo || App.ui.nombreRol(u);
@@ -118,7 +104,6 @@
       h('a', { href: '#/correos' }, App.ui.icono('correo'), 'Correos simulados'),
       h('div', { class: 'sep', role: 'separator' }),
       h('button', { type: 'button', onClick: () => { App.auth.salir(); App.router.ir('/ingresar', { reemplazar: true }); } }, App.ui.icono('usuarios'), 'Cambiar de usuario'),
-      h('button', { type: 'button', onClick: () => restablecerDatos(u) }, App.ui.icono('refrescar'), 'Restablecer datos de la demo'),
       h('div', { class: 'sep', role: 'separator' }),
       h('button', { type: 'button', onClick: () => { App.auth.salir(); App.ui.toast('Cerraste la sesión.'); App.router.ir('/ingresar', { reemplazar: true }); } }, App.ui.icono('salir'), 'Cerrar sesión'));
     botonMenu(boton, menu);
@@ -179,5 +164,5 @@
     if (abierto) { cerrarMenus(); abierto.focus(); }
   });
 
-  App.layout = { montar, restablecerDatos };
+  App.layout = { montar };
 })(window.App = window.App || {});

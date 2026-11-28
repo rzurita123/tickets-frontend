@@ -29,9 +29,15 @@
     return u;
   }
 
-  async function cargarUsuarios(tk) {
-    const [usuarios, localidades, catalogos, tickets] = await Promise.all(['usuarios', 'localidades', 'catalogos', 'tickets'].map((r) => App.api.get('/api/' + r, tk)));
-    App.store.cargar(usuarios, localidades, catalogos, tickets);
+  /** Trae lo que el rol puede ver. */
+  async function cargarUsuarios(tk, rol) {
+    const ormen = rol === 'OPERADOR' || rol === 'ADMINISTRADOR';
+    const rutas = ['usuarios', 'localidades', 'catalogos', 'tickets', 'parametros', 'notificaciones'];
+    if (ormen) rutas.push('soluciones', 'favoritos');
+    if (rol === 'ADMINISTRADOR') rutas.push('auditoria?limite=4000');
+    const r = await Promise.all(rutas.map((ruta) => App.api.get('/api/' + ruta, tk)));
+    const [usuarios, localidades, catalogos, tickets, parametros, notificaciones, soluciones, favoritos, auditoria] = r;
+    App.store.cargar(usuarios, localidades, catalogos, tickets, { parametros, notificaciones, soluciones, favoritos, auditoria });
   }
 
   // Recupera la sesión al recargar la página.
@@ -40,7 +46,8 @@
     if (!s) return;
     try {
       if (!s.token || new Date(s.expira) <= new Date()) throw new Error();
-      await cargarUsuarios(s.token);
+      const rol = s.rol || (await App.api.get('/api/auth/yo', s.token)).rol;
+      await cargarUsuarios(s.token, rol);
     } catch {
       guardarSesion(null);
     }
@@ -64,19 +71,18 @@
       return { ok: false, mensaje: e.status === 401 ? 'Usuario o contraseña incorrectos.' : e.message };
     }
     try {
-      await cargarUsuarios(r.token);
+      await cargarUsuarios(r.token, r.usuario.rol);
     } catch (e) {
       return { ok: false, mensaje: e.message };
     }
     const u = App.store.usuario('u-' + r.usuario.usuario);
-    guardarSesion({ usuarioId: u.id, token: r.token, expira: r.expira, inicio: new Date().toISOString() });
-    App.store.registrarAuditoria(u.id, 'LOGIN', null, 'Usuario y contraseña');
+    guardarSesion({ usuarioId: u.id, rol: u.rol, token: r.token, expira: r.expira, inicio: new Date().toISOString() });
     return { ok: true, usuario: u };
   }
 
   function salir() {
-    const u = usuarioActual();
-    if (u) App.store.registrarAuditoria(u.id, 'LOGOUT', null, '');
+    const tk = usuarioActual() ? token() : null;
+    if (tk) App.api.post('/api/auth/salir', {}, tk).catch(() => {});
     guardarSesion(null);
     App.store.vaciar();
   }

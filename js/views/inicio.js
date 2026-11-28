@@ -310,7 +310,7 @@
       const ok = await ui.confirmar({ titulo: 'Aprobar la solución reutilizable', mensaje: '«' + s.titulo + '» se empieza a sugerir al cargar tickets parecidos.', textoConfirmar: 'Aprobar' });
       if (!ok) return;
       try {
-        S.aprobarSolucion(s.id, u);
+        await S.aprobarSolucion(s.id, u);
         ui.toast('Solución reutilizable aprobada: desde ahora se sugiere.');
         ctx.refrescar();
       } catch (e) { ui.mostrarError(e); }

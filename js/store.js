@@ -1,20 +1,21 @@
-/* Almacén: guarda en localStorage y aplica las reglas de negocio. */
+/* Almacén: datos de la Api y reglas de negocio. */
 (function (App) {
   'use strict';
 
   const U = App.util;
   const D = App.dominio;
 
-  const CLAVE = 'ormen-tickets-demo:db';
-  const MAX_AUDITORIA = 4000;
-  const MAX_CORREOS = 1500;
   const CLASES_CRITICIDAD = ['cri-alta', 'cri-media', 'cri-baja'];
 
-  let db = null;
   // Llegan de la Api y no se guardan.
   let listaUsuarios = [];
   let listaLocalidades = [];
   let listaTickets = [];
+  let listaSoluciones = [];
+  let listaFavoritos = [];
+  let listaCorreos = [];
+  let listaAuditoria = [];
+  let parametros = {};
   let cat = sinCatalogos();
 
   function sinCatalogos() {
@@ -27,7 +28,6 @@
     if (tipo === 'criticidades') item.clase = CLASES_CRITICIDAD.includes(x.codigo) ? x.codigo : '';
     return item;
   }
-  let disponible = true; // localStorage utilizable
   const oyentes = new Set();
 
   class ErrorDemo extends Error {
@@ -47,86 +47,15 @@
     return new ErrorDemo(n === 1 ? 'Revisá el campo marcado.' : 'Revisá los ' + n + ' campos marcados.', campos);
   }
 
-  // ------------------------------------------------------- Persistencia ---
-
-  function probarAlmacenamiento() {
-    try {
-      const k = CLAVE + ':prueba';
-      localStorage.setItem(k, '1');
-      localStorage.removeItem(k);
-      return true;
-    } catch {
-      return false;
-    }
-  }
-
-  function leerGuardado() {
-    if (!disponible) return null;
-    try {
-      const txt = localStorage.getItem(CLAVE);
-      if (!txt) return null;
-      const d = JSON.parse(txt);
-      if (!d || d.version !== App.semilla.VERSION || !Array.isArray(d.soluciones)) return null;
-      return d;
-    } catch {
-      return null;
-    }
-  }
-
-  function escribir() {
-    if (!disponible) return true;
-    try {
-      localStorage.setItem(CLAVE, JSON.stringify(db));
-      return true;
-    } catch {
-      return false;
-    }
-  }
-
   function emitir(info) {
     for (const fn of oyentes) {
       try { fn(info); } catch (e) { console.error(e); }
     }
   }
 
-  /** Aplica un cambio; si no se puede guardar, lo deshace. */
-  function mutar(fn) {
-    const respaldo = JSON.stringify(db);
-    let resultado;
-    try {
-      resultado = fn();
-    } catch (e) {
-      db = JSON.parse(respaldo);
-      throw e;
-    }
-    if (!escribir()) {
-      db = JSON.parse(respaldo);
-      throw new ErrorDemo('El navegador no tiene espacio para guardar este cambio. Probá con menos imágenes o restablecé los datos de la demo.');
-    }
-    emitir({ externo: false });
-    return resultado;
-  }
-
-  function cargarDatos() {
-    db = leerGuardado();
-    if (!db) {
-      db = App.semilla.generar();
-      escribir();
-    }
-  }
-
-  function iniciar() {
-    disponible = probarAlmacenamiento();
-    window.addEventListener('storage', (e) => {
-      if (e.key !== CLAVE || !listaUsuarios.length) return;
-      cargarDatos();
-      emitir({ externo: true });
-    });
-    return { almacenamiento: disponible };
-  }
-
   // Datos de la Api con ids locales.
-  function cargar(usuariosApi, localidadesApi, catalogosApi, ticketsApi) {
+  function cargar(usuariosApi, localidadesApi, catalogosApi, ticketsApi, extras) {
+    const x = extras || {};
     cat = sinCatalogos();
     for (const tipo of Object.keys(cat)) cat[tipo] = catalogosApi[tipo].map((x) => itemDesdeApi(tipo, x));
     listaLocalidades = localidadesApi.map((l) => ({ id: 'loc-' + l.id, nombre: l.nombre, activa: l.activa !== false }));
@@ -134,7 +63,11 @@
       id: 'u-' + u.usuario, usuario: u.usuario, nombre: u.nombre, email: u.email, rol: u.rol,
       cargo: u.cargo || '', localidadId: u.localidadId ? 'loc-' + u.localidadId : null, activo: u.activo !== false,
     }));
-    cargarDatos();
+    listaSoluciones = (x.soluciones || []).map(solucionDesdeApi);
+    listaFavoritos = (x.favoritos || []).map(favoritoDesdeApi);
+    listaCorreos = (x.notificaciones || []).map(correoDesdeApi);
+    listaAuditoria = (x.auditoria || []).map(auditoriaDesdeApi);
+    parametros = Object.assign({}, x.parametros);
     listaTickets = ticketsApi.map(ticketDesdeApi);
   }
 
@@ -142,20 +75,17 @@
     listaUsuarios = [];
     listaLocalidades = [];
     listaTickets = [];
+    listaSoluciones = [];
+    listaFavoritos = [];
+    listaCorreos = [];
+    listaAuditoria = [];
+    parametros = {};
     cat = sinCatalogos();
-    db = null;
   }
 
   function alCambiar(fn) {
     oyentes.add(fn);
     return () => oyentes.delete(fn);
-  }
-
-  function restablecer(usuarioId) {
-    db = App.semilla.generar();
-    if (usuarioId && usuario(usuarioId)) auditar(usuarioId, 'DATOS_RESTABLECIDOS', null, 'Se volvió a generar la base de ejemplo');
-    escribir();
-    emitir({ externo: false, restablecido: true });
   }
 
   // ---------------------------------------------------------- Consultas ---
@@ -168,12 +98,13 @@
   const subsistema = (id) => porId(cat.subsistemas, id);
   const tipoProblema = (id) => porId(cat.tiposProblema, id);
   const criticidad = (id) => porId(cat.criticidades, id);
-  const solucion = (id) => porId(db.soluciones, id);
+  const solucion = (id) => porId(listaSoluciones, id);
   const ticket = (id) => porId(listaTickets, id);
 
   /** Nombre de un elemento de catálogo, o `siNo` si no existe. */
   function nombre(coleccion, id, siNo) {
-    const x = porId(coleccion === 'localidades' ? listaLocalidades : cat[coleccion] || db[coleccion], id);
+    const lista = coleccion === 'localidades' ? listaLocalidades : coleccion === 'soluciones' ? listaSoluciones : cat[coleccion] || [];
+    const x = porId(lista, id);
     if (x) return x.nombre != null ? x.nombre : x.titulo;
     return siNo === undefined ? '—' : siNo;
   }
@@ -291,37 +222,33 @@
     return !!u && (u.rol === 'OPERADOR' || u.rol === 'ADMINISTRADOR');
   }
 
-  // ---------------------------------------------------------- Auditoría ---
+  // ----------------------------------------------- Auditoría y correos ---
 
-  function auditar(usuarioId, operacion, ticketId, detalle) {
-    db.auditoria.unshift({ id: U.uid('aud'), fecha: U.isoAhora(), usuarioId, operacion, ticketId: ticketId || null, detalle: detalle || '' });
-    if (db.auditoria.length > MAX_AUDITORIA) db.auditoria.length = MAX_AUDITORIA;
-  }
-
-  /** Auditoría fuera de una mutación. */
-  function registrarAuditoria(usuarioId, operacion, ticketId, detalle) {
-    auditar(usuarioId, operacion, ticketId, detalle);
-    escribir();
-  }
-
-  // -------------------------------------------------- Correos simulados ---
-
-  /** Aviso por correo al creador cuando ORMEN actualiza el ticket. */
-  function enviarCorreo(t, actor, motivo, detalle) {
-    if (t.privado) return null; // de un ticket privado no se avisa a nadie de la localidad
-    const creador = usuario(t.creadoPorId);
-    if (!creador || creador.rol !== 'CLIENTE' || creador.activo === false) return null;
-    const { asunto, cuerpo } = D.componerCorreo({ ticket: t, destinatario: creador, actor, motivo, detalle });
-    const correo = { id: U.uid('mail'), fecha: U.isoAhora(), ticketId: t.id, paraUsuarioId: creador.id, para: creador.email, asunto, cuerpo };
-    db.correos.unshift(correo);
-    if (db.correos.length > MAX_CORREOS) db.correos.length = MAX_CORREOS;
-    return correo;
+  /** Pantalla que el rol no tiene: queda en la auditoría de la Api. */
+  function avisarAccesoDenegado(pantalla) {
+    App.api.post('/api/auditoria/acceso-denegado', { pantalla }, App.auth.token()).catch(() => {});
   }
 
   function correosPara(u) {
-    if (u.rol === 'CLIENTE') return db.correos.filter((c) => c.paraUsuarioId === u.id);
-    return db.correos.slice();
+    if (u.rol === 'CLIENTE') return listaCorreos.filter((c) => c.paraUsuarioId === u.id);
+    return listaCorreos.slice();
   }
+
+  const recientes = {};
+
+  /** Vuelve a pedir una lista; si cambió, avisa a la pantalla. Como mucho cada 5 segundos. */
+  async function refrescarLista(clave, ruta, mapear, asignar, actual) {
+    if (recientes[clave] && Date.now() - recientes[clave] < 5000) return false;
+    recientes[clave] = Date.now();
+    const nueva = (await App.api.get(ruta, App.auth.token())).map(mapear);
+    if (JSON.stringify(nueva) === JSON.stringify(actual())) return false;
+    asignar(nueva);
+    emitir({ externo: true });
+    return true;
+  }
+
+  const actualizarCorreos = () => refrescarLista('correos', '/api/notificaciones', correoDesdeApi, (l) => { listaCorreos = l; }, () => listaCorreos);
+  const actualizarAuditoria = () => refrescarLista('auditoria', '/api/auditoria?limite=4000', auditoriaDesdeApi, (l) => { listaAuditoria = l; }, () => listaAuditoria);
 
   // -------------------------------------------------------- Validación ---
 
@@ -385,28 +312,15 @@
     };
   }
 
-  function crearPropuesta(t, u, propuesta, solucionTexto, adjuntos, fecha) {
-    const s = {
-      id: U.uid('sol'),
-      titulo: limpio(propuesta.titulo),
-      descripcion: limpio(solucionTexto),
-      sistemaId: t.sistemaId || null,
-      subsistemaId: t.subsistemaId || null,
-      palabrasClave: normalizarPalabras(propuesta.palabrasClave),
-      estado: 'PENDIENTE',
-      ticketOrigenId: t.id,
-      creadaPorId: u.id,
-      creadaEn: fecha,
-      revisadaPorId: null,
-      revisadaEn: null,
-      motivoRechazo: null,
-      actualizadaEn: fecha,
-      adjuntos: (adjuntos || []).map((a) => Object.assign({}, a, { id: a.id || U.uid('img') })),
-    };
-    db.soluciones.push(s);
-    evento(t, { tipo: 'propuesta', autorId: u.id, solucionId: s.id });
-    auditar(u.id, 'SOLUCION_PROPUESTA', t.id, s.titulo);
-    return s;
+  /** Propone la resolución de un ticket cerrado; sin imágenes, la Api copia las de la resolución. */
+  async function crearPropuesta(t, propuesta, solucionTexto, adjuntos) {
+    const s = await pedirApi((tk) => App.api.post('/api/soluciones/propuestas', {
+      ticketId: idApi(t.id), titulo: limpio(propuesta.titulo), descripcion: limpio(solucionTexto),
+      palabrasClave: normalizarPalabras(propuesta.palabrasClave), adjuntos: adjuntos ? imagenes(adjuntos) : null,
+    }, tk));
+    const nueva = guardarSolucionLocal(s);
+    t.actividad.push({ id: 'a-' + nueva.id, tipo: 'propuesta', fecha: nueva.creadaEn, autorId: nueva.creadaPorId, solucionId: nueva.id });
+    return nueva;
   }
 
   // ------------------------------------------------- Tickets en la Api ---
@@ -448,6 +362,35 @@
     return ev;
   }
 
+  function solucionDesdeApi(x) {
+    return {
+      id: x.codigo, titulo: x.titulo, descripcion: x.descripcion,
+      sistemaId: x.sistema || null, subsistemaId: x.subsistema || null, palabrasClave: x.palabrasClave || [],
+      estado: x.estado, ticketOrigenId: x.ticketOrigenId ? 't-' + x.ticketOrigenId : null,
+      creadaPorId: idUsuario(x.creadaPor), creadaEn: fecha(x.creadaEn),
+      revisadaPorId: idUsuario(x.revisadaPor), revisadaEn: fecha(x.revisadaEn), motivoRechazo: x.motivoRechazo || null,
+      actualizadaEn: fecha(x.actualizadaEn), adjuntos: (x.adjuntos || []).map(imagenDesdeApi), usos: x.usos || 0,
+    };
+  }
+
+  function favoritoDesdeApi(x) {
+    return { tipo: x.tipo, id: x.tipo === 'ticket' ? 't-' + x.ticketId : x.solucion, fecha: fecha(x.fecha) };
+  }
+
+  function correoDesdeApi(x) {
+    return {
+      id: 'mail-' + x.id, fecha: fecha(x.fecha), ticketId: x.ticketId ? 't-' + x.ticketId : null,
+      paraUsuarioId: idUsuario(x.para), para: x.destino, asunto: x.asunto, cuerpo: x.cuerpo,
+    };
+  }
+
+  function auditoriaDesdeApi(x) {
+    return {
+      id: 'aud-' + x.id, fecha: fecha(x.fecha), usuarioId: idUsuario(x.usuario), operacion: x.operacion,
+      ticketId: x.ticketId ? 't-' + x.ticketId : null, detalle: x.detalle || '',
+    };
+  }
+
   function ticketDesdeApi(x) {
     const vacio = x.estado === 'BORRADOR' ? '' : null;
     const t = {
@@ -465,8 +408,7 @@
       } : null,
       actividad: (x.actividad || []).map(eventoDesdeApi),
     };
-    // Las propuestas de solución todavía son locales.
-    for (const s of db ? db.soluciones : []) {
+    for (const s of listaSoluciones) {
       if (s.ticketOrigenId === t.id) t.actividad.push({ id: 'a-' + s.id, tipo: 'propuesta', fecha: s.creadaEn, autorId: s.creadaPorId, solucionId: s.id });
     }
     t.actividad.sort((a, b) => a.fecha.localeCompare(b.fecha));
@@ -481,18 +423,22 @@
     return t;
   }
 
-  async function pedirTicket(metodo, ruta, cuerpo) {
+  /** Pedido a la Api; los errores por campo quedan marcados en el formulario. */
+  async function pedirApi(fn) {
     try {
-      const tk = App.auth.token();
-      return await (metodo === 'del' ? App.api.del('/api/tickets' + ruta, tk) : App.api[metodo]('/api/tickets' + ruta, cuerpo || {}, tk));
+      return await fn(App.auth.token());
     } catch (e) {
-      throw new ErrorDemo(e.message);
+      if (e instanceof ErrorDemo) throw e;
+      throw new ErrorDemo(e.message, e.campos);
     }
   }
 
-  /** Guarda lo local (auditoría, correos, soluciones) y avisa a la pantalla. */
+  function pedirTicket(metodo, ruta, cuerpo) {
+    return pedirApi((tk) => (metodo === 'del' ? App.api.del('/api/tickets' + ruta, tk) : App.api[metodo]('/api/tickets' + ruta, cuerpo || {}, tk)));
+  }
+
+  /** Avisa a la pantalla que cambiaron los datos. */
   function asentar() {
-    escribir();
     emitir({ externo: false });
   }
 
@@ -544,12 +490,7 @@
       solucionCatalogoId: op.solucionCatalogoId || null,
       solucionAdjuntos: imagenes(op.solucionAdjuntos),
     })));
-    if (op.registroDirecto) {
-      auditar(u.id, 'TICKET_CERRADO_DIRECTO', t.id, '#' + t.numero + ' · ' + t.titulo);
-      if (op.proponer) crearPropuesta(t, u, op.proponer, t.solucion.texto, adjuntosSolucion(t), U.isoAhora());
-    } else {
-      auditar(u.id, 'TICKET_CREADO', t.id, '#' + t.numero + ' · ' + t.titulo + (op.borradorId ? ' (desde un borrador)' : ''));
-    }
+    if (op.registroDirecto && op.proponer) await crearPropuesta(t, op.proponer, t.solucion.texto, null);
     asentar();
     return t;
   }
@@ -565,7 +506,6 @@
     const b = guardarLocal(id
       ? await pedirTicket('put', '/borradores/' + idApi(id), cuerpo)
       : await pedirTicket('post', '/borradores', cuerpo));
-    auditar(u.id, 'BORRADOR_GUARDADO', null, b.titulo || U.truncar(b.descripcion, 60) || 'Sin título');
     asentar();
     return b;
   }
@@ -575,7 +515,6 @@
     exigir(b, 'El borrador ya no existe.');
     await pedirTicket('del', '/borradores/' + idApi(id));
     listaTickets = listaTickets.filter((x) => x.id !== id);
-    auditar(u.id, 'BORRADOR_DESCARTADO', null, b.titulo || U.truncar(b.descripcion, 60) || 'Sin título');
     asentar();
     return true;
   }
@@ -611,8 +550,6 @@
     if (visibilidad !== 'PUBLICO' && visibilidad !== 'PRIVADO') campos.visibilidad = 'Elegí si el comentario es público o privado.';
     if (Object.keys(campos).length) throw errorDeCampos(campos);
     const t = await accionTicket(previo, 'comentarios', { texto, privado: visibilidad === 'PRIVADO', adjuntos: imagenes(datos.adjuntos) });
-    auditar(u.id, visibilidad === 'PRIVADO' ? 'COMENTARIO_PRIVADO' : 'COMENTARIO_PUBLICO', t.id, U.truncar(texto, 90));
-    if (esOrmen(u) && visibilidad === 'PUBLICO') enviarCorreo(t, u, 'comentario', 'Mensaje de Mesa de ayuda:\n"' + texto + '"');
     asentar();
     return t.actividad.filter((ev) => ev.tipo === 'comentario').pop();
   }
@@ -624,10 +561,7 @@
     const op = usuario(operadorId);
     exigir(esOrmen(op) && op.activo !== false, 'Elegí una persona activa de ORMEN.');
     exigir(previo.operadorId !== operadorId, 'El ticket ya lo atiende ' + op.nombre + '.');
-    const de = previo.estado;
     const t = await accionTicket(previo, 'asignar', { operador: nombreUsuario(operadorId) });
-    auditar(u.id, 'ASIGNACION', t.id, 'Atiende: ' + op.nombre + (de !== t.estado ? ' · ' + nombreEstado(de) + ' → ' + nombreEstado(t.estado) : ''));
-    if (de !== t.estado) enviarCorreo(t, u, 'en-proceso', null);
     asentar();
     return t;
   }
@@ -637,7 +571,6 @@
     const previo = ticketActivoParaOperador(ticketId, u);
     exigir(previo.estado === 'EN_PROCESO', 'Sólo se puede devolver a la cola un ticket En proceso.');
     const t = await accionTicket(previo, 'liberar');
-    auditar(u.id, 'LIBERACION', t.id, 'En proceso → Abierto · sin asignar');
     asentar();
     return t;
   }
@@ -683,8 +616,6 @@
     if (!motivo) e.motivo = 'Escribí por qué se eleva.';
     if (Object.keys(e).length) throw errorDeCampos(e);
     const t = await accionTicket(previo, 'elevar', destino.tipo === 'grupo' ? { grupo: destino.id, motivo } : { usuario: nombreUsuario(destino.id), motivo });
-    auditar(u.id, 'ELEVACION', t.id, 'Elevado a ' + nombreDestino(destino) + ' · ' + U.truncar(motivo, 70));
-    enviarCorreo(t, u, 'elevado', 'Lo derivamos a ' + nombreDestino(destino) + ' para revisarlo. Te avisamos por acá apenas tengamos novedades.');
     asentar();
     return t;
   }
@@ -700,8 +631,6 @@
     if (datos.visibilidad !== 'PUBLICO' && datos.visibilidad !== 'PRIVADO') e.visibilidad = 'Elegí si el motivo es público o privado.';
     if (Object.keys(e).length) throw errorDeCampos(e);
     const t = await accionTicket(previo, 'bloquear', { texto, privado: datos.visibilidad === 'PRIVADO' });
-    auditar(u.id, 'BLOQUEO', t.id, 'En proceso → Bloqueado · ' + U.truncar(texto, 70));
-    enviarCorreo(t, u, 'bloqueado', datos.visibilidad === 'PUBLICO' ? 'Mensaje de Mesa de ayuda:\n"' + texto + '"' : null);
     asentar();
     return t;
   }
@@ -711,8 +640,6 @@
     exigir(previo.estado === 'BLOQUEADO', 'El ticket no está bloqueado.');
     const texto = limpio(datos && datos.texto);
     const t = await accionTicket(previo, 'desbloquear', { texto });
-    auditar(u.id, 'DESBLOQUEO', t.id, 'Bloqueado → En proceso' + (texto ? ' · ' + U.truncar(texto, 70) : ''));
-    enviarCorreo(t, u, 'estado', null);
     asentar();
     return t;
   }
@@ -747,7 +674,6 @@
     const t = await accionTicket(previo, 'clasificacion', {
       sistema: datos.sistemaId, subsistema: datos.subsistemaId || null, criticidad: datos.criticidadId, tipoProblema: datos.tipoProblemaId,
     }, 'put');
-    auditar(u.id, 'DATOS', t.id, cambios.map((c) => c.etiqueta + ': ' + c.de + ' → ' + c.a).join(' · '));
     asentar();
     return t;
   }
@@ -765,17 +691,12 @@
     if (datos.tipoProblemaId && !tipoProblema(datos.tipoProblemaId)) e.tipoProblemaId = 'Elegí el tipo de problema.';
     if (datos.proponer) e = Object.assign(e, validarPropuesta(datos.proponer));
     if (Object.keys(e).length) throw errorDeCampos(e);
-    const de = previo.estado;
     const mensaje = limpio(datos.mensajePublico);
     const t = await accionTicket(previo, 'cerrar', {
       texto: limpio(datos.texto), mensajePublico: mensaje, tipoProblema: datos.tipoProblemaId || null,
       solucionCatalogoId: datos.solucionCatalogoId || null, adjuntos: imagenes(datos.adjuntos),
     });
-    if (mensaje) auditar(u.id, 'COMENTARIO_PUBLICO', t.id, U.truncar(mensaje, 90));
-    auditar(u.id, 'CIERRE', t.id, nombreEstado(de) + ' → Cerrado');
-    enviarCorreo(t, u, 'cierre', mensaje ? 'Mensaje de Mesa de ayuda:\n"' + mensaje + '"' : null);
-    let propuesta = null;
-    if (datos.proponer) propuesta = crearPropuesta(t, u, datos.proponer, datos.texto, adjuntosSolucion(t), U.isoAhora());
+    const propuesta = datos.proponer ? await crearPropuesta(t, datos.proponer, datos.texto, null) : null;
     asentar();
     return { ticket: t, propuesta };
   }
@@ -786,8 +707,6 @@
     exigir(previo.estado === 'CERRADO', 'Sólo se puede reabrir un ticket cerrado.');
     const motivo = limpio(datos && datos.motivo);
     const t = await accionTicket(previo, 'reabrir', { texto: motivo });
-    auditar(u.id, 'REAPERTURA', t.id, 'Cerrado → En proceso' + (motivo ? ' · ' + U.truncar(motivo, 70) : ''));
-    enviarCorreo(t, u, 'reapertura', null);
     asentar();
     return t;
   }
@@ -865,7 +784,6 @@
     exigir(!creador || creador.rol !== 'CLIENTE', 'Este ticket lo creó la localidad: ya lo conocen, no se puede hacer privado.');
     exigir(!!previo.privado !== !!privado, privado ? 'El ticket ya es privado.' : 'El ticket ya es visible para la localidad.');
     const t = await accionTicket(previo, 'privado', { privado: !!privado }, 'put');
-    auditar(u.id, 'PRIVACIDAD', t.id, privado ? 'Marcado como privado' : 'Visible para la localidad');
     asentar();
     return t;
   }
@@ -878,16 +796,16 @@
 
   /** Solución pendiente o aprobada que surgió del ticket. */
   function propuestaDeTicket(t) {
-    return db.soluciones.find((s) => s.ticketOrigenId === t.id && s.estado !== 'RECHAZADA') || null;
+    return listaSoluciones.find((s) => s.ticketOrigenId === t.id && s.estado !== 'RECHAZADA') || null;
   }
 
   /** Solución aprobada que surgió del ticket (para el destacado). */
   function solucionOriginadaPor(t) {
-    return db.soluciones.find((s) => s.ticketOrigenId === t.id && s.estado === 'APROBADA') || null;
+    return listaSoluciones.find((s) => s.ticketOrigenId === t.id && s.estado === 'APROBADA') || null;
   }
 
   /** Propone la resolución de un ticket cerrado como solución. */
-  function proponerSolucion(ticketId, u, datos) {
+  async function proponerSolucion(ticketId, u, datos) {
     const t = ticket(ticketId);
     exigir(t && t.estado !== 'BORRADOR', 'El ticket no existe.');
     exigir(esOrmen(u), 'Sólo ORMEN puede proponer soluciones reutilizables.');
@@ -897,50 +815,57 @@
     const e = validarPropuesta({ titulo: datos.titulo, palabrasClave: datos.palabrasClave });
     if (!limpio(datos.descripcion)) e.propuestaDescripcion = 'Escribí la solución (los pasos a seguir).';
     if (Object.keys(e).length) throw errorDeCampos(e);
-    return mutar(() => crearPropuesta(t, u, datos, datos.descripcion, datos.adjuntos || adjuntosSolucion(t), U.isoAhora()));
+    const propuesta = await crearPropuesta(t, datos, datos.descripcion, datos.adjuntos || null);
+    asentar();
+    return propuesta;
   }
 
   // ---------------------------------------------------------- Favoritos ---
 
   /** Favoritos personales de tickets y soluciones. */
-  function listaFavoritos(u) {
-    return (u && db.favoritos && db.favoritos[u.id]) || [];
+  function favoritosPropios(u) {
+    return u && esOrmen(u) ? listaFavoritos : [];
   }
 
   function esFavorito(u, tipo, id) {
-    return listaFavoritos(u).some((f) => f.tipo === tipo && f.id === id);
+    return favoritosPropios(u).some((f) => f.tipo === tipo && f.id === id);
   }
 
   /** Favoritos visibles, del más nuevo al más viejo. */
   function favoritosDe(u) {
-    return listaFavoritos(u)
+    return favoritosPropios(u)
       .map((f) => Object.assign({}, f, { item: f.tipo === 'ticket' ? ticket(f.id) : solucion(f.id) }))
       .filter((f) => f.item && (f.tipo !== 'ticket' || (f.item.estado !== 'BORRADOR' && puedeVerTicket(f.item, u))))
       .sort((a, b) => b.fecha.localeCompare(a.fecha));
   }
 
   /** Agrega o quita un favorito; devuelve si quedó marcado. */
-  function alternarFavorito(u, tipo, id) {
+  async function alternarFavorito(u, tipo, id) {
     exigir(esOrmen(u), 'Los favoritos son de ORMEN.');
     exigir(tipo === 'ticket' || tipo === 'solucion', 'Sólo se marcan tickets o soluciones reutilizables.');
     exigir(tipo === 'ticket' ? ticket(id) : solucion(id), 'Ya no existe.');
-    return mutar(() => {
-      if (!db.favoritos) db.favoritos = {};
-      const lista = db.favoritos[u.id] || (db.favoritos[u.id] = []);
-      const i = lista.findIndex((f) => f.tipo === tipo && f.id === id);
-      if (i >= 0) {
-        lista.splice(i, 1);
-        return false;
-      }
-      lista.push({ tipo, id, fecha: U.isoAhora() });
-      return true;
-    });
+    const marcar = !esFavorito(u, tipo, id);
+    const ruta = '/api/favoritos/' + (tipo === 'ticket' ? 'tickets/' + idApi(id) : 'soluciones/' + encodeURIComponent(id));
+    await pedirApi((tk) => (marcar ? App.api.put(ruta, {}, tk) : App.api.del(ruta, tk)));
+    listaFavoritos = marcar
+      ? listaFavoritos.concat({ tipo, id, fecha: U.isoAhora() })
+      : listaFavoritos.filter((f) => !(f.tipo === tipo && f.id === id));
+    asentar();
+    return marcar;
   }
 
   // --------------------------------------------------------- Soluciones ---
 
+  function guardarSolucionLocal(x) {
+    const s = solucionDesdeApi(x);
+    const i = listaSoluciones.findIndex((y) => y.id === s.id);
+    if (i >= 0) listaSoluciones[i] = s;
+    else listaSoluciones.push(s);
+    return s;
+  }
+
   function soluciones(filtro) {
-    let l = db.soluciones.slice();
+    let l = listaSoluciones.slice();
     if (filtro && filtro.estado) l = l.filter((s) => s.estado === filtro.estado);
     return l;
   }
@@ -972,51 +897,29 @@
     return e;
   }
 
+  const cuerpoSolucion = (datos) => ({
+    titulo: limpio(datos.titulo), descripcion: limpio(datos.descripcion),
+    sistema: datos.sistemaId || null, subsistema: datos.subsistemaId || null,
+    palabrasClave: normalizarPalabras(datos.palabrasClave),
+    adjuntos: imagenes(datos.adjuntos),
+  });
+
   /** Alta o edición de una solución reutilizable. */
-  function guardarSolucion(datos, u, id) {
+  async function guardarSolucion(datos, u, id) {
     exigir(esOrmen(u), 'Las soluciones reutilizables son para Mesa de ayuda y gestión de ORMEN.');
     const e = validarSolucion(datos);
     if (Object.keys(e).length) throw errorDeCampos(e);
     const existente = id ? solucion(id) : null;
     exigir(!id || existente, 'La solución no existe.');
     exigir(!existente || u.rol === 'ADMINISTRADOR', 'Sólo un administrador puede modificar soluciones reutilizables.');
-    return mutar(() => {
-      const ahora = U.isoAhora();
-      const campos = {
-        titulo: limpio(datos.titulo),
-        descripcion: limpio(datos.descripcion),
-        sistemaId: datos.sistemaId || null,
-        subsistemaId: datos.subsistemaId || null,
-        palabrasClave: normalizarPalabras(datos.palabrasClave),
-      };
-      if (existente) {
-        const previas = new Map(existente.adjuntos.map((a) => [a.id, a]));
-        Object.assign(existente, campos, {
-          actualizadaEn: ahora,
-          adjuntos: (datos.adjuntos || []).map((a) => previas.get(a.id) || { id: a.id || U.uid('img'), nombre: a.nombre || 'imagen', dataUrl: a.dataUrl, autorId: u.id, fecha: ahora }),
-        });
-        auditar(u.id, 'SOLUCION_EDITADA', existente.ticketOrigenId, existente.titulo);
-        return existente;
-      }
-      const admin = u.rol === 'ADMINISTRADOR';
-      const s = Object.assign({ id: U.uid('sol') }, campos, {
-        estado: admin ? 'APROBADA' : 'PENDIENTE',
-        ticketOrigenId: null,
-        creadaPorId: u.id,
-        creadaEn: ahora,
-        revisadaPorId: admin ? u.id : null,
-        revisadaEn: admin ? ahora : null,
-        motivoRechazo: null,
-        actualizadaEn: ahora,
-        adjuntos: copiarAdjuntos(datos.adjuntos, u.id, ahora),
-      });
-      db.soluciones.push(s);
-      auditar(u.id, admin ? 'SOLUCION_CREADA' : 'SOLUCION_PROPUESTA', null, s.titulo);
-      return s;
-    });
+    const s = guardarSolucionLocal(await pedirApi((tk) => (existente
+      ? App.api.put('/api/soluciones/' + encodeURIComponent(id), cuerpoSolucion(datos), tk)
+      : App.api.post('/api/soluciones', cuerpoSolucion(datos), tk))));
+    asentar();
+    return s;
   }
 
-  function revisarSolucion(id, u, aprobar, motivo, cambios) {
+  async function revisarSolucion(id, u, aprobar, motivo, cambios) {
     exigir(u && u.rol === 'ADMINISTRADOR', 'Sólo un administrador puede aprobar o rechazar soluciones reutilizables.');
     const s = solucion(id);
     exigir(s, 'La solución no existe.');
@@ -1026,23 +929,10 @@
       const e = validarSolucion(Object.assign({}, s, cambios));
       if (Object.keys(e).length) throw errorDeCampos(e);
     }
-    return mutar(() => {
-      const ahora = U.isoAhora();
-      if (aprobar && cambios) {
-        Object.assign(s, {
-          titulo: limpio(cambios.titulo), descripcion: limpio(cambios.descripcion),
-          sistemaId: cambios.sistemaId || null, subsistemaId: cambios.subsistemaId || null,
-          palabrasClave: normalizarPalabras(cambios.palabrasClave),
-        });
-      }
-      s.estado = aprobar ? 'APROBADA' : 'RECHAZADA';
-      s.revisadaPorId = u.id;
-      s.revisadaEn = ahora;
-      s.actualizadaEn = ahora;
-      s.motivoRechazo = aprobar ? null : limpio(motivo);
-      auditar(u.id, aprobar ? 'SOLUCION_APROBADA' : 'SOLUCION_RECHAZADA', s.ticketOrigenId, s.titulo + (aprobar ? '' : ' · ' + U.truncar(motivo, 70)));
-      return s;
-    });
+    const ruta = '/api/soluciones/' + encodeURIComponent(id) + (aprobar ? '/aprobar' : '/rechazar');
+    const r = guardarSolucionLocal(await pedirApi((tk) => App.api.post(ruta, aprobar ? (cambios ? cuerpoSolucion(cambios) : undefined) : { motivo: limpio(motivo) }, tk)));
+    asentar();
+    return r;
   }
 
   const aprobarSolucion = (id, u, cambios) => revisarSolucion(id, u, true, null, cambios);
@@ -1083,10 +973,8 @@
       ? App.api.put(ruta + '/' + encodeURIComponent(id), { nombre: n }, tk)
       : App.api.post(ruta, { nombre: n, sistema: datos.sistemaId || null }, tk)));
     const item = itemDesdeApi(tipo, r);
-    const antes = existente ? existente.nombre : null;
     if (existente) Object.assign(existente, item);
     else cat[tipo].push(item);
-    registrarAuditoria(admin.id, 'CATALOGO', null, NOMBRES_CATALOGO[tipo] + ': ' + (!existente ? 'alta de ' + n : antes === n ? n : antes + ' → ' + n));
     return existente || item;
   }
 
@@ -1096,7 +984,6 @@
     exigir(item, 'El elemento no existe.');
     await pedirCatalogo((tk) => App.api.put('/api/catalogos/' + tipo + '/' + encodeURIComponent(id), { activo: !!activo }, tk));
     item.activo = !!activo;
-    registrarAuditoria(admin.id, 'CATALOGO', null, NOMBRES_CATALOGO[tipo] + ': ' + item.nombre + (activo ? ' · activado' : ' · desactivado'));
     return item;
   }
 
@@ -1105,7 +992,7 @@
     pesoLocalidad: [0, 10], pesoPalabraComun: [0, 10], maxResultados: [1, 15],
   };
 
-  function guardarParametros(p, admin) {
+  async function guardarParametros(p, admin) {
     exigirAdmin(admin);
     const e = {};
     const nuevos = {};
@@ -1116,19 +1003,15 @@
       else nuevos[k] = v;
     }
     if (Object.keys(e).length) throw errorDeCampos(e);
-    return mutar(() => {
-      const cambios = Object.keys(nuevos).filter((k) => db.parametros[k] !== nuevos[k]).map((k) => k + ': ' + db.parametros[k] + ' → ' + nuevos[k]);
-      db.parametros = Object.assign({}, db.parametros, nuevos);
-      auditar(admin.id, 'PARAMETROS', null, cambios.length ? cambios.join(' · ') : 'Sin cambios');
-      return db.parametros;
-    });
+    parametros = await pedirApi((tk) => App.api.put('/api/parametros', nuevos, tk));
+    asentar();
+    return parametros;
   }
 
   App.store = {
     ErrorDemo,
-    iniciar, cargar, vaciar, actualizarTickets, alCambiar, restablecer, registrarAuditoria,
-    get datos() { return db && Object.assign(Object.create(db), { tickets: listaTickets }); },
-    get almacenamientoDisponible() { return disponible; },
+    cargar, vaciar, actualizarTickets, actualizarCorreos, actualizarAuditoria, alCambiar, avisarAccesoDenegado,
+    get datos() { return { tickets: listaTickets, soluciones: listaSoluciones, parametros, auditoria: listaAuditoria, correos: listaCorreos }; },
     // consultas
     usuario, localidad, sistema, subsistema, tipoProblema, criticidad, solucion, ticket,
     nombre, nombreEstado, etiquetaUsuario, esOrmen,

@@ -261,10 +261,10 @@
       else b.setAttribute('aria-label', accion + (o.etiqueta ? ': ' + o.etiqueta : ''));
     }
     pintar(S.esFavorito(u, tipo, id));
-    b.addEventListener('click', (e) => {
+    b.addEventListener('click', async (e) => {
       e.stopPropagation();
       try {
-        const activo = S.alternarFavorito(u, tipo, id);
+        const activo = await S.alternarFavorito(u, tipo, id);
         pintar(activo);
         toast(activo ? 'Agregado a favoritos. Lo ves en Inicio › Favoritos.' : 'Quitado de favoritos.');
         // Se redibuja para actualizar Favoritos y su contador.

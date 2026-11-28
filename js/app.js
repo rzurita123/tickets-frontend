@@ -39,7 +39,6 @@
   }
 
   async function arrancar() {
-    const inicio = App.store.iniciar();
     await App.auth.restaurar();
 
     // Otra pestaña cambió los datos: se redibuja.
@@ -66,9 +65,6 @@
       if (App.auth.usuarioActual() && !document.hidden) App.store.actualizarTickets().catch(() => {});
     }, 30000);
 
-    if (!inicio.almacenamiento) {
-      App.ui.toast('Este navegador no deja guardar datos: la demo funciona, pero los cambios se pierden al recargar.', { tipo: 'aviso', duracion: 10000 });
-    }
   }
 
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', arrancar);

@@ -99,7 +99,7 @@
       ir('/', { reemplazar: true });
       return;
     } else if (r.def.roles && !r.def.roles.includes(usuario.rol)) {
-      App.store.registrarAuditoria(usuario.id, 'ACCESO_DENEGADO', null, 'Intentó abrir la pantalla ' + destino.ruta);
+      App.store.avisarAccesoDenegado(destino.ruta);
       def = { vista: App.vistas.sinAcceso, titulo: 'Sin acceso' };
     } else {
       def = r.def;
@@ -175,7 +175,5 @@
     registrar, ir, refrescar, actualizarQuery, iniciar,
     get actual() { return actual; },
     estaSucio: () => sucio,
-    /** Olvida los cambios sin guardar (por ejemplo, al restablecer la demo). */
-    descartarCambios() { sucio = false; },
   };
 })(window.App = window.App || {});

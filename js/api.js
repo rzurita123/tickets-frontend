@@ -3,10 +3,19 @@
   'use strict';
 
   class ErrorApi extends Error {
-    constructor(mensaje, status) {
+    constructor(mensaje, status, campos) {
       super(mensaje);
       this.status = status;
+      this.campos = campos || null;
     }
+  }
+
+  /** Errores por campo de la Api: { campo: [mensaje] } → { campo: mensaje }. */
+  function campos(datos) {
+    if (!datos || !datos.errors) return null;
+    const res = {};
+    for (const [k, v] of Object.entries(datos.errors)) res[k] = Array.isArray(v) ? v[0] : String(v);
+    return Object.keys(res).length ? res : null;
   }
 
   async function pedir(metodo, ruta, cuerpo, token) {
@@ -24,7 +33,7 @@
       throw new ErrorApi('No se pudo conectar con el servidor.', 0);
     }
     const datos = res.status === 204 ? null : await res.json().catch(() => null);
-    if (!res.ok) throw new ErrorApi((datos && datos.title) || 'El servidor respondió con un error.', res.status);
+    if (!res.ok) throw new ErrorApi((datos && datos.title) || 'El servidor respondió con un error.', res.status, campos(datos));
     return datos;
   }
 

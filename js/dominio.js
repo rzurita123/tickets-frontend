@@ -58,32 +58,7 @@
     CATALOGO: 'Modificación de catálogos',
     PARAMETROS: 'Modificación de parámetros',
     ACCESO_DENEGADO: 'Acceso denegado',
-    DATOS_RESTABLECIDOS: 'Datos de la demo restablecidos',
   };
 
-  /** Correo al creador del ticket; sólo información pública. */
-  function componerCorreo({ ticket, destinatario, actor, motivo, detalle }) {
-    const numero = ticket.numero ? '#' + ticket.numero : '';
-    const estado = ESTADOS[ticket.estado] ? ESTADOS[ticket.estado].nombre : ticket.estado;
-    const asuntos = {
-      comentario: `Ticket ${numero}: nueva respuesta de Mesa de ayuda`,
-      estado: `Ticket ${numero}: el estado cambió a ${estado}`,
-      'en-proceso': `Ticket ${numero}: Mesa de ayuda lo está atendiendo`,
-      elevado: `Ticket ${numero}: se derivó a otro nivel de soporte`,
-      bloqueado: `Ticket ${numero}: en espera de un factor externo`,
-      cierre: `Ticket ${numero} cerrado`,
-      reapertura: `Ticket ${numero} reabierto`,
-    };
-    const lineas = [
-      `Hola ${destinatario.nombre.split(' ')[0]}:`,
-      '',
-      `Tu ticket ${numero} "${ticket.titulo}" tuvo una actualización.`,
-      `Estado actual: ${estado}.`,
-    ];
-    if (detalle) lineas.push('', detalle);
-    lineas.push('', 'Podés ver el detalle ingresando al Sistema de tickets.', '', `Mesa de ayuda ORMEN (${actor.nombre})`);
-    return { asunto: asuntos[motivo] || `Ticket ${numero} actualizado`, cuerpo: lineas.join('\n') };
-  }
-
-  App.dominio = { ESTADOS, ESTADOS_ACTIVOS, ESTADOS_REGISTRADOS, ROLES, OPERACIONES, componerCorreo };
+  App.dominio = { ESTADOS, ESTADOS_ACTIVOS, ESTADOS_REGISTRADOS, ROLES, OPERACIONES };
 })(window.App = window.App || {});

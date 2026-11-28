@@ -12,6 +12,7 @@
     const ui = App.ui;
     const D = App.dominio;
     const q = Object.assign({}, ctx.query);
+    S.actualizarAuditoria().catch(() => {});
     const registros = S.datos.auditoria;
 
     // ---- controles ----
